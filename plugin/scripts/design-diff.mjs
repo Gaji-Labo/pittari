@@ -208,7 +208,7 @@ async function captureActual(proxy) {
 		// 撮影ごとに新しいコンテキストで開くとオープニングなどの演出が毎回再生されるので、完成形を撮らせる
 		const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor, reducedMotion: "reduce" });
 		let page;
-		let blockedNavigation = null;
+		let offsiteNavigation = null;
 		// WebSocket の接続は requestfailed に出ない
 		context.on("page", (openedPage) =>
 			openedPage.on("websocket", (webSocket) => {
@@ -226,25 +226,32 @@ async function captureActual(proxy) {
 			} catch {
 				return;
 			}
-			if (frame === page?.mainFrame()) blockedNavigation ??= request.url();
+			if (frame === page?.mainFrame()) offsiteNavigation ??= request.url();
 		});
-		// 止めた先へ移ったページは Chrome のエラー画面になるので、撮影できたとしても実装の描画ではない
-		const throwIfNavigationBlocked = () => {
-			if (blockedNavigation === null) return;
+		// 止めた先へ移ったページは Chrome のエラー画面になり、--allow-domain の宛先へ移ったページは外部のページになるので、
+		// どちらも撮影できたとしても実装の描画ではない
+		const throwIfLeftDevServer = () => {
+			if (offsiteNavigation === null) return;
 			throw new CaptureError(
-				`ページが外部の宛先へ移ろうとしたので止め、撮影せずに終えました: ${blockedNavigation}\n開発サーバーのリダイレクトや、location を書き換えるスクリプトを確かめてください。`,
+				`ページが開発サーバーの外へ移ろうとしたので、撮影せずに終えました: ${offsiteNavigation}\n開発サーバーのリダイレクトや、location を書き換えるスクリプトを確かめてください。`,
 			);
 		};
 		page = await context.newPage();
+		// 止めた先への移動は Chrome のエラー画面（chrome-error:）への移動になるので、requestfailed の側で拾う
+		page.on("framenavigated", (frame) => {
+			if (frame !== page.mainFrame()) return;
+			const navigatedUrl = frame.url();
+			if (/^https?:/i.test(navigatedUrl) && !isLocalDevServerUrl(navigatedUrl)) offsiteNavigation ??= navigatedUrl;
+		});
 		try {
 			await page.goto(url, { waitUntil: "networkidle" });
 		} catch (error) {
-			throwIfNavigationBlocked();
+			throwIfLeftDevServer();
 			throw new CaptureError(
 				`ページの読み込みに失敗しました: ${url}\n開発サーバーが起動しているか、--url の値が正しいか確認してください。\n${errorText(error)}`,
 			);
 		}
-		throwIfNavigationBlocked();
+		throwIfLeftDevServer();
 		// ヘッドレスの Chromium はスクロールバーを幅 0 で隠すが、scrollbar-gutter: stable はその幅を確保し続けるので、
 		// 見本画像には無い空白の帯が右端に写る
 		await page.addStyleTag({ content: ":root { scrollbar-gutter: auto !important; }" });
@@ -253,7 +260,7 @@ async function captureActual(proxy) {
 		try {
 			await locator.waitFor({ state: "visible", timeout: 10_000 });
 		} catch (error) {
-			throwIfNavigationBlocked();
+			throwIfLeftDevServer();
 			if (error instanceof Error && error.name === "TimeoutError") {
 				throw new CaptureError(
 					`要素が見つかりませんでした: ${selector}\nセレクタが正しいか、変更が描画先に反映されている（ビルドが必要なプロジェクトならビルド済み）か確認してください。`,
@@ -299,7 +306,7 @@ async function captureActual(proxy) {
 		// Figma のノードが無い実行では、突き合わせる箱がデザイン側に無いので、実装側の要素の辺をデザイン画像の中で探す
 		const elementBoxes = figmaNodes ? null : await locator.evaluate(collectElementBoxes);
 		const buffer = await locator.screenshot();
-		throwIfNavigationBlocked();
+		throwIfLeftDevServer();
 		return { buffer, rect, domBoxes, elementBoxes, excludeBoxes };
 	} finally {
 		await browser.close();

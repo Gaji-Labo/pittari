@@ -163,7 +163,8 @@ try {
 } catch {}
 const command = typeof input?.tool_input?.command === "string" ? input.tool_input.command : null;
 
-// 失敗した（差分が閾値を超えて終了コード 1 で終えた）実行も、人が承認して実行まで進んだことに変わりはない
+// 失敗した（差分が閾値を超えて終了コード 1 で終えた）実行も、人が承認して実行まで進んだことに変わりはない。
+// 承認画面で拒否された呼び出しでは、PostToolUseFailure は動かない（Claude Code の hooks の文書による）
 if (input?.hook_event_name === "PostToolUse" || input?.hook_event_name === "PostToolUseFailure") {
 	const parsed = command === null ? null : parseDesignDiff(command);
 	if (parsed?.domains?.length > 0) rememberApproved(input.session_id, parsed.domains);

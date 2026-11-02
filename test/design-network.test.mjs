@@ -158,6 +158,16 @@ describe("承認の hook", () => {
 		test("別のセッションでは尋ねる", () => {
 			assert.equal(runHook({ ...run("s2", fonts), hook_event_name: "PreToolUse" })?.permissionDecision, "ask");
 		});
+		test("別々の実行で承認した宛先をどちらも覚える", () => {
+			runHook({ ...run("s3", "design-diff --url http://localhost:3000 --allow-domain fonts.googleapis.com"), hook_event_name: "PostToolUse" });
+			runHook({ ...run("s3", "design-diff --url http://localhost:3000 --allow-domain fonts.gstatic.com"), hook_event_name: "PostToolUse" });
+			assert.equal(runHook({ ...run("s3", fonts), hook_event_name: "PreToolUse" }), null);
+		});
+		test("ホスト名の形でない宛先は覚えない", () => {
+			const odd = "design-diff --url http://localhost:3000 --allow-domain ../../escape";
+			runHook({ ...run("s4", odd), hook_event_name: "PostToolUse" });
+			assert.equal(runHook({ ...run("s4", odd), hook_event_name: "PreToolUse" })?.permissionDecision, "ask");
+		});
 		test("セッション ID がパスの区切りを含むと覚えない", () => {
 			runHook({ ...run("../x", fonts), hook_event_name: "PostToolUse" });
 			assert.equal(runHook({ ...run("../x", fonts), hook_event_name: "PreToolUse" })?.permissionDecision, "ask");

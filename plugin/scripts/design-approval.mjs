@@ -1,5 +1,6 @@
-import { mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isValidAllowDomain } from "./design-network.mjs";
 
 // design-diff は --allow-domain で渡した外部の宛先へ、撮影中の Chrome を通信させる。auto mode では承認を判定役のモデルが代わりに行うので、
 // 外部の宛先を許可する実行は、PreToolUse の ask でどのモードでも人の承認画面に回す。
@@ -112,20 +113,20 @@ function parseDesignDiff(command) {
 	return { domains: allowDomainsIn(designDiffArgs(words)).map((domain) => domain.toLowerCase()) };
 }
 
-// 承認の記録は、サンドボックスの中から書けないプラグインのデータ用ディレクトリに置き、AI が承認を偽れないようにする
+// 承認の記録は、サンドボックスの中から書けないプラグインのデータ用ディレクトリに置き、AI が承認を偽れないようにする。
+// 並行して終えた実行どうしが同じファイルを読んで書き戻すと、片方の記録が消えるので、宛先ごとに空のファイルを作って記録する
 const SESSION_ID = /^[A-Za-z0-9_-]+$/;
-function approvalFile(sessionId) {
+function approvalDir(sessionId) {
 	const dataDir = process.env.CLAUDE_PLUGIN_DATA;
 	if (!dataDir || typeof sessionId !== "string" || !SESSION_ID.test(sessionId)) return null;
-	return join(dataDir, "approved-domains", `${sessionId}.json`);
+	return join(dataDir, "approved-domains", sessionId);
 }
 
 function readApproved(sessionId) {
-	const file = approvalFile(sessionId);
-	if (file === null) return [];
+	const dir = approvalDir(sessionId);
+	if (dir === null) return [];
 	try {
-		const value = JSON.parse(readFileSync(file, "utf8"));
-		return Array.isArray(value) ? value : [];
+		return readdirSync(dir);
 	} catch {
 		return [];
 	}
@@ -135,14 +136,18 @@ function readApproved(sessionId) {
 const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 function rememberApproved(sessionId, domains) {
-	const file = approvalFile(sessionId);
-	if (file === null) return;
-	mkdirSync(dirname(file), { recursive: true });
-	writeFileSync(file, JSON.stringify([...new Set([...readApproved(sessionId), ...domains])]));
-	for (const name of readdirSync(dirname(file))) {
-		const path = join(dirname(file), name);
+	const dir = approvalDir(sessionId);
+	if (dir === null) return;
+	mkdirSync(dir, { recursive: true });
+	// 宛先をファイル名に使うので、パスの区切りを含みうる値は記録しない。design-diff もホスト名の形でない値を受け付けない
+	for (const domain of domains.filter(isValidAllowDomain)) writeFileSync(join(dir, domain), "");
+	// 新しい宛先が無い実行ではディレクトリの更新日時が変わらないので、使い続けているセッションの記録が古いものとして消えないよう更新する
+	const now = new Date();
+	utimesSync(dir, now, now);
+	for (const name of readdirSync(dirname(dir))) {
+		const path = join(dirname(dir), name);
 		try {
-			if (Date.now() - statSync(path).mtimeMs > STALE_AFTER_MS) unlinkSync(path);
+			if (Date.now() - statSync(path).mtimeMs > STALE_AFTER_MS) rmSync(path, { recursive: true, force: true });
 		} catch {}
 	}
 }

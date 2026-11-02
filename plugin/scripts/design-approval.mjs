@@ -7,18 +7,29 @@ import { dirname, join } from "node:path";
 // サンドボックスの除外ルールは、つないだコマンドがすべて一致すればまとめて外で動かすので、design-diff を ; や && でつないだコマンドも拒否する。
 // 調整のたびの再実行で同じ宛先を尋ね続けないよう、実行まで進んだ（人が承認した）宛先をセッションの間だけ覚える
 
-// cat .design-diff/… や git diff …/design-diff.mjs のように、design-diff を実行しないコマンドまで拒否しないよう、プログラムの語だけを見る
+// シェルは引用符とバックスラッシュを取り除いてから実行するので、'design'-diff や d\esign-diff も design-diff の実行として拾う
 function mentionsDesignDiff(command) {
-	const words = command.split(/[\s;&|()`'"<>]+/);
+	const words = command.replace(/[\\'"]/g, "").split(/[\s;&|()`<>${}]+/);
 	return words.some(
 		(word) => word === "design-diff" || word.endsWith("/design-diff") || (word.endsWith("design-diff.mjs") && words.some((w) => w === "node" || w.endsWith("/node"))),
 	);
 }
 
-// 引用符とバックスラッシュだけを解釈して語に分ける。変数やコマンドの置き換え、ファイル名の展開、複数のコマンドのつなぎを含むと null を返す
-function splitWords(command) {
-	const words = [];
+// 引用符とバックスラッシュを解釈し、; && || | & と改行で区切った単純なコマンドごとに、語の並びを返す。
+// 変数やコマンドの置き換え、リダイレクト、ファイル名の展開を含むと null を返す
+function splitCommands(command) {
+	const commands = [];
+	let words = [];
 	let word = null;
+	const endWord = () => {
+		if (word !== null) words.push(word);
+		word = null;
+	};
+	const endCommand = () => {
+		endWord();
+		if (words.length > 0) commands.push(words);
+		words = [];
+	};
 	let i = 0;
 	while (i < command.length) {
 		const c = command[i];
@@ -32,7 +43,12 @@ function splitWords(command) {
 			i++;
 			while (command[i] !== '"') {
 				if (i >= command.length || command[i] === "$" || command[i] === "`") return null;
-				if (command[i] === "\\" && '$`"\\\n'.includes(command[i + 1])) i++;
+				// bash は二重引用符の中でも、行末のバックスラッシュを改行ごと取り除いて次の行とつなぐ
+				if (command[i] === "\\" && command[i + 1] === "\n") {
+					i += 2;
+					continue;
+				}
+				if (command[i] === "\\" && '$`"\\'.includes(command[i + 1])) i++;
 				word += command[i];
 				i++;
 			}
@@ -42,18 +58,25 @@ function splitWords(command) {
 			if (command[i + 1] !== "\n") word = (word ?? "") + command[i + 1];
 			i += 2;
 		} else if (c === " " || c === "\t") {
-			if (word !== null) words.push(word);
-			word = null;
+			endWord();
 			i++;
-		} else if ("$`;&|<>()\n*?[]{}~#".includes(c)) {
+		} else if (";&|\n".includes(c)) {
+			endCommand();
+			i++;
+		} else if ("$`<>()*?[]{}~#".includes(c)) {
 			return null;
 		} else {
 			word = (word ?? "") + c;
 			i++;
 		}
 	}
-	if (word !== null) words.push(word);
-	return words;
+	endCommand();
+	return commands;
+}
+
+function leadingAssignments(words) {
+	const index = words.findIndex((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word));
+	return index === -1 ? words.length : index;
 }
 
 function designDiffArgs(words) {
@@ -73,20 +96,20 @@ function allowDomainsIn(args) {
 }
 
 const UNREADABLE_DESIGN_DIFF =
-	"design-diff は、変数やコマンドの置き換え・&& などのつなぎ・ファイル名の展開を使わずに、単独のコマンドとして実行してください。$ やバッククォートを含む引数は単一引用符で囲みます。";
+	"design-diff は、変数やコマンドの置き換え・&& などのつなぎ・リダイレクト・ファイル名の展開を使わずに、単独のコマンドとして実行してください。$ やバッククォートを含む引数は単一引用符で囲みます。";
 
-// design-diff を実行しないコマンドなら null を返す。拒否するコマンドなら拒否の理由を返す
+// design-diff を実行しないコマンドなら null を返す。拒否するコマンドなら拒否の理由を返す。
+// cat .design-diff/… | head のように、design-diff を実行しないコマンドまで拒否しないよう、つないだコマンドごとにプログラムの語を見る。
+// 語に分けられないコマンドは、どの語がプログラムかを確かめられないので、design-diff の名前を含むだけで拒否する
 function parseDesignDiff(command) {
-	if (!mentionsDesignDiff(command)) return null;
-	const words = splitWords(command);
-	if (words === null) return { denyReason: UNREADABLE_DESIGN_DIFF };
-	const firstNonAssignment = words.findIndex((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word));
-	if (firstNonAssignment > 0 && designDiffArgs(words.slice(firstNonAssignment)) !== null) {
-		return { denyReason: "design-diff は、環境変数を前に付けずに実行してください。" };
-	}
-	const args = designDiffArgs(words);
-	if (args === null) return null;
-	return { domains: allowDomainsIn(args).map((domain) => domain.toLowerCase()) };
+	const commands = splitCommands(command);
+	if (commands === null) return mentionsDesignDiff(command) ? { denyReason: UNREADABLE_DESIGN_DIFF } : null;
+	const runsDesignDiff = (words) => designDiffArgs(words.slice(leadingAssignments(words))) !== null;
+	if (!commands.some(runsDesignDiff)) return null;
+	if (commands.length > 1) return { denyReason: UNREADABLE_DESIGN_DIFF };
+	const [words] = commands;
+	if (leadingAssignments(words) > 0) return { denyReason: "design-diff は、環境変数を前に付けずに実行してください。" };
+	return { domains: allowDomainsIn(designDiffArgs(words)).map((domain) => domain.toLowerCase()) };
 }
 
 // 承認の記録は、サンドボックスの中から書けないプラグインのデータ用ディレクトリに置き、AI が承認を偽れないようにする

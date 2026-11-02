@@ -94,6 +94,9 @@ describe("承認の hook", () => {
 		"design-diff --url http://localhost:3000 --allow-domain fonts.gstatic.com",
 		"node plugin/scripts/design-diff.mjs --url http://localhost:3000 --allow-domain=fonts.gstatic.com",
 		"/path/to/plugin/bin/design-diff --url http://localhost:3000 --allow-domain fonts.gstatic.com",
+		"d\\esign-diff --url http://localhost:3000 --allow-domain evil.example",
+		"'design'-diff --url http://localhost:3000 --allow-domain evil.example",
+		'design""-diff --url http://localhost:3000 --allow-domain evil.example',
 	]) {
 		test(`外部サイトを許可する実行は承認画面に回す: ${command}`, () => assert.equal(decide(command)?.permissionDecision, "ask"));
 	}
@@ -101,6 +104,9 @@ describe("承認の hook", () => {
 		"design-diff --url http://localhost:3000 --selector '#hero' --design a.png --width 1440",
 		"cat .design-diff/cv-375/summary.json",
 		"git diff plugin/scripts/design-diff.mjs | head",
+		"cat plugin/bin/design-diff | head",
+		"git log --oneline | grep design-diff",
+		"ls plugin/bin/design-diff && echo ok",
 		"ls -la",
 	]) {
 		test(`回さない: ${command}`, () => assert.equal(decide(command), null));
@@ -114,6 +120,8 @@ describe("承認の hook", () => {
 		"design-diff --url http://localhost:3000 && design-diff --url http://localhost:3000 --allow-domain evil.example",
 		"design-diff --url http://localhost:3000 --allow-domain evil.*",
 		"HOME=/tmp/x design-diff --url http://localhost:3000",
+		"'design'-diff --url http://localhost:3000 --allow-domain \"$HOST\"",
+		"design-diff --url http://localhost:3000 --allow-domain evil.example > out.txt",
 	]) {
 		test(`引数を読めないので拒否する: ${command}`, () => assert.equal(decide(command)?.permissionDecision, "deny"));
 	}
@@ -154,6 +162,10 @@ describe("承認の hook", () => {
 			runHook({ ...run("../x", fonts), hook_event_name: "PostToolUse" });
 			assert.equal(runHook({ ...run("../x", fonts), hook_event_name: "PreToolUse" })?.permissionDecision, "ask");
 		});
+	});
+	test("二重引用符の中の行末のバックスラッシュは、bash と同じく次の行とつないだ宛先を並べる", () => {
+		const reason = decide('design-diff --url http://localhost:3000 --allow-domain "evil.exa\\\nmple.com"').permissionDecisionReason;
+		assert.match(reason, /・evil\.example\.com\n/);
 	});
 	test("引用符やエスケープを解いた宛先を並べる", () => {
 		const reason = decide(

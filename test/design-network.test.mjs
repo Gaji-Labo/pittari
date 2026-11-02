@@ -168,6 +168,18 @@ describe("承認の hook", () => {
 			runHook({ ...run("s4", odd), hook_event_name: "PostToolUse" });
 			assert.equal(runHook({ ...run("s4", odd), hook_event_name: "PreToolUse" })?.permissionDecision, "ask");
 		});
+		test("セッションを終えたら忘れる", () => {
+			runHook({ ...run("s5", fonts), hook_event_name: "PostToolUse" });
+			assert.equal(runHook({ ...run("s5", fonts), hook_event_name: "PreToolUse" }), null);
+			runHook({ session_id: "s5", hook_event_name: "SessionEnd", reason: "other" });
+			assert.equal(runHook({ ...run("s5", fonts), hook_event_name: "PreToolUse" })?.permissionDecision, "ask");
+		});
+		test("終えたセッションの記録だけを消す", () => {
+			runHook({ ...run("s6", fonts), hook_event_name: "PostToolUse" });
+			runHook({ ...run("s7", fonts), hook_event_name: "PostToolUse" });
+			runHook({ session_id: "s6", hook_event_name: "SessionEnd", reason: "other" });
+			assert.equal(runHook({ ...run("s7", fonts), hook_event_name: "PreToolUse" }), null);
+		});
 		test("セッション ID がパスの区切りを含むと覚えない", () => {
 			runHook({ ...run("../x", fonts), hook_event_name: "PostToolUse" });
 			assert.equal(runHook({ ...run("../x", fonts), hook_event_name: "PreToolUse" })?.permissionDecision, "ask");

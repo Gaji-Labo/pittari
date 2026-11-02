@@ -6,7 +6,8 @@ import { isValidAllowDomain } from "./design-network.mjs";
 // 外部の宛先を許可する実行は、PreToolUse の ask でどのモードでも人の承認画面に回す。
 // 承認画面に並べる宛先と実際に渡る引数が食い違わないよう、シェルの展開を含むコマンドは引数を推測せずに拒否する。
 // サンドボックスの除外ルールは、つないだコマンドがすべて一致すればまとめて外で動かすので、design-diff を ; や && でつないだコマンドも拒否する。
-// 調整のたびの再実行で同じ宛先を尋ね続けないよう、実行まで進んだ（人が承認した）宛先をセッションの間だけ覚える
+// 調整のたびの再実行で同じ宛先を尋ね続けないよう、実行まで進んだ（人が承認した）宛先をセッションの間だけ覚える。
+// 日をおいて再開したセッションで、承認した経緯を人が覚えていない宛先や、その後に持ち主が変わった宛先を尋ねずに使わないよう、セッションを終えたら忘れる
 
 // シェルは引用符とバックスラッシュを取り除いてから実行するので、'design'-diff や d\esign-diff も design-diff の実行として拾う
 function mentionsDesignDiff(command) {
@@ -132,7 +133,7 @@ function readApproved(sessionId) {
 	}
 }
 
-// 終えたセッションの記録が溜まり続けないよう、しばらく更新の無いものを消す
+// 強制終了などで SessionEnd の hook が動かなかったセッションの記録が溜まり続けないよう、しばらく更新の無いものを消す
 const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 function rememberApproved(sessionId, domains) {
@@ -162,6 +163,12 @@ try {
 	input = JSON.parse(readFileSync(0, "utf8"));
 } catch {}
 const command = typeof input?.tool_input?.command === "string" ? input.tool_input.command : null;
+
+if (input?.hook_event_name === "SessionEnd") {
+	const dir = approvalDir(input.session_id);
+	if (dir !== null) rmSync(dir, { recursive: true, force: true });
+	process.exit(0);
+}
 
 // 失敗した（差分が閾値を超えて終了コード 1 で終えた）実行も、人が承認して実行まで進んだことに変わりはない。
 // 承認画面で拒否された呼び出しでは、PostToolUseFailure は動かない（Claude Code の hooks の文書による）

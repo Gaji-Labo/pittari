@@ -173,7 +173,10 @@ async function captureActual() {
 	let browser;
 	try {
 		// playwright が版を固定して配る Chromium ではなく自動更新される Chrome を使い、ブラウザの脆弱性の修正をプラグインの更新から切り離す
-		browser = await chromium.launch({ channel: "chrome" });
+		// design-diff は Claude Code のサンドボックスの外で動くので、Chrome 自身のサンドボックスまで外すと、
+		// ページが Chrome の脆弱性を 1 つ突くだけでユーザーの権限でファイルを読んだりコマンドを動かしたりできてしまう。
+		// Playwright は既定で Chrome のサンドボックスを外すため、明示して有効にする
+		browser = await chromium.launch({ channel: "chrome", chromiumSandbox: true });
 	} catch (error) {
 		throw new CaptureError(
 			`Chrome を起動できません。Google Chrome がインストールされているか、サンドボックス内で実行していないか確認してください。\n${errorText(error)}`,

@@ -2,11 +2,8 @@ import { createServer, request as httpRequest } from "node:http";
 import { connect } from "node:net";
 import { isLocalHostname, LOCAL_HOSTNAMES } from "./design-url.mjs";
 
-// design-diff の Chrome はサンドボックスの外で動き、ページの JS は AI が書く。開発サーバーと --allow-domain 以外へ通信させると、
-// 承認画面に出ない宛先へ、AI が読んだ内容を送れてしまう。
-// Playwright の route はリダイレクトの 2 回目以降の要求を通らず、WebSocket も別扱いなので、Chrome の通信をすべてこのプロキシサーバーに通し、許可していない宛先への通信を遮断する
+// Playwright の route はリダイレクトの 2 回目以降の要求も WebSocket の接続も通らないので、Chrome の通信をすべてこのプロキシサーバーに通し、許可していない宛先への通信を遮断する
 
-// ワイルドカードやポートを受け付けると、承認画面に並ぶ文字列から、許可する宛先の範囲を人が読み取りにくくなる
 const DOMAIN_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/;
 
 export function isValidAllowDomain(value) {

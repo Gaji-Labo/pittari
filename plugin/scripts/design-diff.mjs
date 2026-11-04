@@ -177,7 +177,6 @@ function cropToPaintedBox(png, rect) {
 	return cropped;
 }
 
-// プロキシサーバーにはページの通信だけでなく Chrome 自身の更新確認なども届くので、遮断した外部のホストはページの要求から拾う
 const blockedRequests = [];
 
 function isBlockedUrl(value) {
@@ -216,8 +215,6 @@ async function captureActual(proxy) {
 			if (isBlockedUrl(request.url())) blockedRequests.push({ url: request.url(), resourceType: request.resourceType() });
 		});
 		const page = await context.newPage();
-		// 遮断した外部のホストへ移ったページは Chrome のエラー画面になり、--allow-domain の宛先へ移ったページは外部のページになるので、
-		// どちらも撮影できたとしても実装の描画ではない
 		const throwIfLeftDevServer = () => {
 			if (isLocalDevServerUrl(page.url())) return;
 			throw new CaptureError(

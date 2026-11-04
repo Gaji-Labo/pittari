@@ -2,20 +2,12 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join } from "node:path";
 import { isValidAllowDomain } from "./design-network.mjs";
 
-// design-diff は --allow-domain で渡した外部の宛先へ、撮影中の Chrome を通信させる。auto mode では承認を判定役のモデルが代わりに行うので、
-// 外部の宛先を許可する実行は、PreToolUse の ask でどのモードでも人の承認画面に回す。
-// 調整のたびの再実行で同じ宛先を尋ね続けないよう、実行まで進んだ（人が承認した）宛先をセッションの間だけ覚える。
-// 日をおいて再開したセッションで、承認した経緯を人が覚えていない宛先や、その後に持ち主が変わった宛先を尋ねずに使わないよう、セッションを終えたら忘れる
-
-// 承認画面に並べる宛先と実際に渡る引数が食い違わないよう、design-diff の名前を含むコマンドは、シェルが何も書き換えない決まった形のときだけ通す。
 // シェルの規則を再現して design-diff を実行するかを見分ける方法では、timeout などを前に付けた形のように、サンドボックスの除外ルールに一致する形を
-// hook が 1 つ見落とすたびに、AI は承認画面を通さずに外部の宛先を許可できる。
-// 代わりに、名前を含むだけで design-diff を実行しないコマンドも拒否する
+// hook が 1 つ見落とすたびに、AI は承認画面を通さずに外部の宛先を許可できる。そこで、シェルが何も書き換えない決まった形だけを通す
 const WORD = String.raw`(?:[A-Za-z0-9_./:=@%+,-]|'[^']*'|"[^"$\x60\\]*")+`;
 const RUNNABLE_DESIGN_DIFF = new RegExp(String.raw`^design-diff((?:[ \t]+${WORD})*)[ \t]*$`);
 
-// シェルは引用符とバックスラッシュを取り除いてから実行するので、'design'-diff や d\esign-diff も design-diff の名前として拾う。
-// 出力先の .design-diff/ を読むコマンドまで拒否しないよう、部分一致では拾わない
+// シェルは引用符とバックスラッシュを取り除いてから実行するので、'design'-diff や d\esign-diff も design-diff の名前として拾う
 function mentionsDesignDiff(command) {
 	const words = command.replace(/[\\'"]/g, "").split(/[\s;&|()`<>${}]+/);
 	return words.some((word) => word === "design-diff" || word.endsWith("/design-diff"));
@@ -45,7 +37,7 @@ function parseDesignDiff(command) {
 }
 
 // 承認の記録は、サンドボックスの中から書けないプラグインのデータ用ディレクトリに置き、AI が承認を偽れないようにする。
-// 並行して終えた実行どうしが同じファイルを読んで書き戻すと、片方の記録が消えるので、宛先ごとに空のファイルを作って記録する
+// 並行して終えた実行どうしが記録を消し合わないよう、宛先ごとに空のファイルを作る
 const SESSION_ID = /^[A-Za-z0-9_-]+$/;
 function approvalDir(sessionId) {
 	const dataDir = process.env.CLAUDE_PLUGIN_DATA;
@@ -67,7 +59,6 @@ function rememberApproved(sessionId, domains) {
 	const dir = approvalDir(sessionId);
 	if (dir === null) return;
 	mkdirSync(dir, { recursive: true });
-	// 宛先をファイル名に使うので、パスの区切りを含みうる値は記録しない。design-diff もホスト名の形でない値を受け付けない
 	for (const domain of domains.filter(isValidAllowDomain)) writeFileSync(join(dir, domain), "");
 }
 
@@ -82,22 +73,20 @@ try {
 } catch {}
 const command = typeof input?.tool_input?.command === "string" ? input.tool_input.command : null;
 
-// 強制終了などで SessionEnd が動かなかったセッションの記録は消えずに残る。記録は空のファイルで、別のセッションの承認には使われないので、残っても消さない
 if (input?.hook_event_name === "SessionEnd") {
 	const dir = approvalDir(input.session_id);
 	if (dir !== null) rmSync(dir, { recursive: true, force: true });
 	process.exit(0);
 }
 
-// 失敗した（差分が閾値を超えて終了コード 1 で終えた）実行も、人が承認して実行まで進んだことに変わりはない。
-// 承認画面で拒否された呼び出しでは、PostToolUseFailure は動かない（Claude Code の hooks の文書による）
+// PostToolUseFailure でも記録するのは、差分が閾値を超えて終了コード 1 で終えた実行も、人が承認して実行まで進んでいるため
 if (input?.hook_event_name === "PostToolUse" || input?.hook_event_name === "PostToolUseFailure") {
 	const parsed = command === null ? null : parseDesignDiff(command);
 	if (parsed?.domains?.length > 0) rememberApproved(input.session_id, parsed.domains);
 	process.exit(0);
 }
 
-// Claude Code の入力の形が変わって hook がコマンドを読めなくなったときに、外部の宛先を許可する実行が承認画面を通らずに実行されないようにする
+// Claude Code の入力の形が変わって hook がコマンドを読めなくなっても、外部の宛先を許可する実行が承認画面を通らずに動かないよう、すべての Bash の実行を承認画面に回す
 if (command === null) {
 	decide("ask", "design-to-code の hook が Bash のコマンドを読み取れませんでした。外部サイトとの通信を見逃さないよう、すべての Bash の実行を承認画面に回しています。");
 }

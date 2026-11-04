@@ -103,7 +103,7 @@ describe("承認の hook", () => {
 		"git diff plugin/scripts/design-diff.mjs | head",
 		"ls -la",
 	]) {
-		test(`回さない: ${command}`, () => assert.equal(decide(command), null));
+		test(`承認画面に回さない: ${command}`, () => assert.equal(decide(command), null));
 	}
 	for (const command of [
 		"design-diff --$(printf allow)-domain evil.example --url http://localhost:3000",

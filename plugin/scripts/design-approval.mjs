@@ -1,91 +1,23 @@
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { isValidAllowDomain } from "./design-network.mjs";
 
 // design-diff は --allow-domain で渡した外部の宛先へ、撮影中の Chrome を通信させる。auto mode では承認を判定役のモデルが代わりに行うので、
 // 外部の宛先を許可する実行は、PreToolUse の ask でどのモードでも人の承認画面に回す。
-// 承認画面に並べる宛先と実際に渡る引数が食い違わないよう、シェルの展開を含むコマンドは引数を推測せずに拒否する。
-// サンドボックスの除外ルールは、つないだコマンドがすべて一致すればまとめて外で動かすので、design-diff を ; や && でつないだコマンドも拒否する。
 // 調整のたびの再実行で同じ宛先を尋ね続けないよう、実行まで進んだ（人が承認した）宛先をセッションの間だけ覚える。
 // 日をおいて再開したセッションで、承認した経緯を人が覚えていない宛先や、その後に持ち主が変わった宛先を尋ねずに使わないよう、セッションを終えたら忘れる
 
-// シェルは引用符とバックスラッシュを取り除いてから実行するので、'design'-diff や d\esign-diff も design-diff の実行として拾う
+// 承認画面に並べる宛先と実際に渡る引数が食い違わないよう、design-diff の名前を含むコマンドは、シェルが何も書き換えない決まった形のときだけ通す。
+// シェルの規則を再現して実行の有無を見分ける方法では、timeout などを前に付けた形のように、サンドボックスの除外ルールが一致する形を
+// 1 つ見落とすたびに承認を飛ばせる。名前を含むだけで実行しないコマンドまで拒否するのは、その代わりに受け入れる
+const WORD = String.raw`(?:[A-Za-z0-9_./:=@%+,-]|'[^']*'|"[^"$\x60\\]*")+`;
+const RUNNABLE_DESIGN_DIFF = new RegExp(String.raw`^design-diff((?:[ \t]+${WORD})*)[ \t]*$`);
+
+// シェルは引用符とバックスラッシュを取り除いてから実行するので、'design'-diff や d\esign-diff も design-diff の名前として拾う。
+// 出力先の .design-diff/ は名前として拾わない
 function mentionsDesignDiff(command) {
 	const words = command.replace(/[\\'"]/g, "").split(/[\s;&|()`<>${}]+/);
-	return words.some(
-		(word) => word === "design-diff" || word.endsWith("/design-diff") || (word.endsWith("design-diff.mjs") && words.some((w) => w === "node" || w.endsWith("/node"))),
-	);
-}
-
-// 引用符とバックスラッシュを解釈し、; && || | & と改行で区切った単純なコマンドごとに、語の並びを返す。
-// 変数やコマンドの置き換え、リダイレクト、ファイル名の展開を含むと null を返す
-function splitCommands(command) {
-	const commands = [];
-	let words = [];
-	let word = null;
-	const endWord = () => {
-		if (word !== null) words.push(word);
-		word = null;
-	};
-	const endCommand = () => {
-		endWord();
-		if (words.length > 0) commands.push(words);
-		words = [];
-	};
-	let i = 0;
-	while (i < command.length) {
-		const c = command[i];
-		if (c === "'") {
-			const end = command.indexOf("'", i + 1);
-			if (end === -1) return null;
-			word = (word ?? "") + command.slice(i + 1, end);
-			i = end + 1;
-		} else if (c === '"') {
-			word ??= "";
-			i++;
-			while (command[i] !== '"') {
-				if (i >= command.length || command[i] === "$" || command[i] === "`") return null;
-				// bash は二重引用符の中でも、行末のバックスラッシュを改行ごと取り除いて次の行とつなぐ
-				if (command[i] === "\\" && command[i + 1] === "\n") {
-					i += 2;
-					continue;
-				}
-				if (command[i] === "\\" && '$`"\\'.includes(command[i + 1])) i++;
-				word += command[i];
-				i++;
-			}
-			i++;
-		} else if (c === "\\") {
-			if (i + 1 >= command.length) return null;
-			if (command[i + 1] !== "\n") word = (word ?? "") + command[i + 1];
-			i += 2;
-		} else if (c === " " || c === "\t") {
-			endWord();
-			i++;
-		} else if (";&|\n".includes(c)) {
-			endCommand();
-			i++;
-		} else if ("$`<>()*?[]{}~#".includes(c)) {
-			return null;
-		} else {
-			word = (word ?? "") + c;
-			i++;
-		}
-	}
-	endCommand();
-	return commands;
-}
-
-function leadingAssignments(words) {
-	const index = words.findIndex((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word));
-	return index === -1 ? words.length : index;
-}
-
-function designDiffArgs(words) {
-	const [program, script] = words;
-	if (program === "design-diff" || program?.endsWith("/design-diff")) return words.slice(1);
-	if ((program === "node" || program?.endsWith("/node")) && script?.endsWith("design-diff.mjs")) return words.slice(2);
-	return null;
+	return words.some((word) => word === "design-diff" || word.endsWith("/design-diff"));
 }
 
 function allowDomainsIn(args) {
@@ -97,21 +29,19 @@ function allowDomainsIn(args) {
 	return domains;
 }
 
-const UNREADABLE_DESIGN_DIFF =
-	"design-diff は、変数やコマンドの置き換え・&& などのつなぎ・リダイレクト・ファイル名の展開を使わずに、単独のコマンドとして実行してください。$ やバッククォートを含む引数は単一引用符で囲みます。";
+const DENY_REASON = [
+	"design-diff は、design-diff で始まる単独のコマンドとして実行してください。前置き（cd、環境変数、timeout など）・&& などのつなぎ・変数・リダイレクトは使えません。",
+	"英数字と . / : = @ % + , - _ 以外の文字を含む引数は引用符で囲み、$・バッククォート・バックスラッシュを含む引数は単一引用符で囲みます。",
+	"design-diff のコードや出力を探す・読むときは、Bash ではなく Grep・Read ツールを使ってください。",
+].join("\n");
 
-// design-diff を実行しないコマンドなら null を返す。拒否するコマンドなら拒否の理由を返す。
-// cat .design-diff/… | head のように、design-diff を実行しないコマンドまで拒否しないよう、つないだコマンドごとにプログラムの語を見る。
-// 語に分けられないコマンドは、どの語がプログラムかを確かめられないので、design-diff の名前を含むだけで拒否する
+// design-diff の名前を含まないコマンドなら null を返す。拒否するコマンドなら拒否の理由を返す
 function parseDesignDiff(command) {
-	const commands = splitCommands(command);
-	if (commands === null) return mentionsDesignDiff(command) ? { denyReason: UNREADABLE_DESIGN_DIFF } : null;
-	const runsDesignDiff = (words) => designDiffArgs(words.slice(leadingAssignments(words))) !== null;
-	if (!commands.some(runsDesignDiff)) return null;
-	if (commands.length > 1) return { denyReason: UNREADABLE_DESIGN_DIFF };
-	const [words] = commands;
-	if (leadingAssignments(words) > 0) return { denyReason: "design-diff は、環境変数を前に付けずに実行してください。" };
-	return { domains: allowDomainsIn(designDiffArgs(words)).map((domain) => domain.toLowerCase()) };
+	if (!mentionsDesignDiff(command)) return null;
+	const match = RUNNABLE_DESIGN_DIFF.exec(command);
+	if (match === null) return { denyReason: DENY_REASON };
+	const args = (match[1].match(new RegExp(WORD, "g")) ?? []).map((arg) => arg.replace(/'([^']*)'|"([^"]*)"/g, (_, single, double) => single ?? double));
+	return { domains: allowDomainsIn(args).map((domain) => domain.toLowerCase()) };
 }
 
 // 承認の記録は、サンドボックスの中から書けないプラグインのデータ用ディレクトリに置き、AI が承認を偽れないようにする。
@@ -133,24 +63,12 @@ function readApproved(sessionId) {
 	}
 }
 
-// 強制終了などで SessionEnd の hook が動かなかったセッションの記録が溜まり続けないよう、しばらく更新の無いものを消す
-const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
-
 function rememberApproved(sessionId, domains) {
 	const dir = approvalDir(sessionId);
 	if (dir === null) return;
 	mkdirSync(dir, { recursive: true });
 	// 宛先をファイル名に使うので、パスの区切りを含みうる値は記録しない。design-diff もホスト名の形でない値を受け付けない
 	for (const domain of domains.filter(isValidAllowDomain)) writeFileSync(join(dir, domain), "");
-	// 新しい宛先が無い実行ではディレクトリの更新日時が変わらないので、使い続けているセッションの記録が古いものとして消えないよう更新する
-	const now = new Date();
-	utimesSync(dir, now, now);
-	for (const name of readdirSync(dirname(dir))) {
-		const path = join(dirname(dir), name);
-		try {
-			if (Date.now() - statSync(path).mtimeMs > STALE_AFTER_MS) rmSync(path, { recursive: true, force: true });
-		} catch {}
-	}
 }
 
 function decide(permissionDecision, permissionDecisionReason) {
@@ -164,6 +82,7 @@ try {
 } catch {}
 const command = typeof input?.tool_input?.command === "string" ? input.tool_input.command : null;
 
+// 強制終了などで SessionEnd が動かなかったセッションの記録は消えずに残る。記録は空のファイルで、別のセッションの承認には使われないので、残っても消さない
 if (input?.hook_event_name === "SessionEnd") {
 	const dir = approvalDir(input.session_id);
 	if (dir !== null) rmSync(dir, { recursive: true, force: true });

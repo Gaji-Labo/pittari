@@ -92,11 +92,8 @@ describe("承認の hook", () => {
 
 	for (const command of [
 		"design-diff --url http://localhost:3000 --allow-domain fonts.gstatic.com",
-		"node plugin/scripts/design-diff.mjs --url http://localhost:3000 --allow-domain=fonts.gstatic.com",
-		"/path/to/plugin/bin/design-diff --url http://localhost:3000 --allow-domain fonts.gstatic.com",
-		"d\\esign-diff --url http://localhost:3000 --allow-domain evil.example",
-		"'design'-diff --url http://localhost:3000 --allow-domain evil.example",
-		'design""-diff --url http://localhost:3000 --allow-domain evil.example',
+		"design-diff --url http://localhost:3000 --allow-domain=fonts.gstatic.com",
+		"design-diff --url http://localhost:3000 --selector '#hero' --allow-domain 'fonts.gstatic.com'",
 	]) {
 		test(`外部サイトを許可する実行は承認画面に回す: ${command}`, () => assert.equal(decide(command)?.permissionDecision, "ask"));
 	}
@@ -104,9 +101,6 @@ describe("承認の hook", () => {
 		"design-diff --url http://localhost:3000 --selector '#hero' --design a.png --width 1440",
 		"cat .design-diff/cv-375/summary.json",
 		"git diff plugin/scripts/design-diff.mjs | head",
-		"cat plugin/bin/design-diff | head",
-		"git log --oneline | grep design-diff",
-		"ls plugin/bin/design-diff && echo ok",
 		"ls -la",
 	]) {
 		test(`回さない: ${command}`, () => assert.equal(decide(command), null));
@@ -122,8 +116,21 @@ describe("承認の hook", () => {
 		"HOME=/tmp/x design-diff --url http://localhost:3000",
 		"'design'-diff --url http://localhost:3000 --allow-domain \"$HOST\"",
 		"design-diff --url http://localhost:3000 --allow-domain evil.example > out.txt",
+		"timeout 60 design-diff --url http://localhost:3000 --allow-domain evil.example",
+		"nohup design-diff --url http://localhost:3000 --allow-domain evil.example",
+		"env design-diff --url http://localhost:3000 --allow-domain evil.example",
+		"/path/to/plugin/bin/design-diff --url http://localhost:3000 --allow-domain evil.example",
+		"d\\esign-diff --url http://localhost:3000 --allow-domain evil.example",
+		"'design'-diff --url http://localhost:3000 --allow-domain evil.example",
+		'design""-diff --url http://localhost:3000 --allow-domain evil.example',
+		'design-diff --url http://localhost:3000 --allow-domain "evil.exa\\\nmple.com"',
+		"design-diff --url http://localhost:3000 --selector #hero --allow-domain evil.example",
+		"design-diff --url http://localhost:3000 --allow-{domain,x} evil.example",
 	]) {
-		test(`引数を読めないので拒否する: ${command}`, () => assert.equal(decide(command)?.permissionDecision, "deny"));
+		test(`決まった形でないので拒否する: ${command}`, () => assert.equal(decide(command)?.permissionDecision, "deny"));
+	}
+	for (const command of ["cat plugin/bin/design-diff | head", "git log --oneline | grep design-diff", "ls plugin/bin/design-diff && echo ok"]) {
+		test(`design-diff の名前を含むだけのコマンドも拒否する: ${command}`, () => assert.equal(decide(command)?.permissionDecision, "deny"));
 	}
 	test("入力を読めないときは承認画面に回す", () => {
 		const output = execFileSync("node", [hook], { input: "{", encoding: "utf8" });
@@ -185,13 +192,9 @@ describe("承認の hook", () => {
 			assert.equal(runHook({ ...run("../x", fonts), hook_event_name: "PreToolUse" })?.permissionDecision, "ask");
 		});
 	});
-	test("二重引用符の中の行末のバックスラッシュは、bash と同じく次の行とつないだ宛先を並べる", () => {
-		const reason = decide('design-diff --url http://localhost:3000 --allow-domain "evil.exa\\\nmple.com"').permissionDecisionReason;
-		assert.match(reason, /・evil\.example\.com\n/);
-	});
-	test("引用符やエスケープを解いた宛先を並べる", () => {
+	test("引用符を解いた宛先を並べる", () => {
 		const reason = decide(
-			`design-diff --url http://localhost:3000 --selector ".md\\:flex" --allow-domain 'fonts.gstatic.com' --allow-domain="fonts.googleapis.com" --allow-domain use\\.typekit.net`,
+			`design-diff --url http://localhost:3000 --selector '.md\\:flex' --allow-domain 'fonts.gstatic.com' --allow-domain="fonts.googleapis.com" --allow-domain use.typekit.net`,
 		).permissionDecisionReason;
 		assert.match(reason, /・fonts\.gstatic\.com\n  ・fonts\.googleapis\.com\n  ・use\.typekit\.net/);
 	});

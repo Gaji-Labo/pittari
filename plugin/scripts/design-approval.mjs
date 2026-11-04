@@ -15,7 +15,7 @@ const WORD = String.raw`(?:[A-Za-z0-9_./:=@%+,-]|'[^']*'|"[^"$\x60\\]*")+`;
 const RUNNABLE_DESIGN_DIFF = new RegExp(String.raw`^design-diff((?:[ \t]+${WORD})*)[ \t]*$`);
 
 // シェルは引用符とバックスラッシュを取り除いてから実行するので、'design'-diff や d\esign-diff も design-diff の名前として拾う。
-// 出力先の .design-diff/ は名前として拾わない
+// 出力先の .design-diff/ を読むコマンドまで拒否しないよう、部分一致では拾わない
 function mentionsDesignDiff(command) {
 	const words = command.replace(/[\\'"]/g, "").split(/[\s;&|()`<>${}]+/);
 	return words.some((word) => word === "design-diff" || word.endsWith("/design-diff"));
@@ -36,7 +36,6 @@ const DENY_REASON = [
 	"design-diff のコードや出力を探す・読むときは、Bash ではなく Grep・Read ツールを使ってください。",
 ].join("\n");
 
-// design-diff の名前を含まないコマンドなら null を返す。拒否するコマンドなら拒否の理由を返す
 function parseDesignDiff(command) {
 	if (!mentionsDesignDiff(command)) return null;
 	const match = RUNNABLE_DESIGN_DIFF.exec(command);

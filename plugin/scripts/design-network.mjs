@@ -48,7 +48,6 @@ export async function startBlockingProxy(allowDomains) {
 		req.pipe(upstream);
 	});
 
-	// https と WebSocket は CONNECT で届く
 	server.on("connect", (req, clientSocket, head) => {
 		const match = CONNECT_TARGET.exec(req.url);
 		if (!match || !isAllowedHost(match[1], allowDomains)) {

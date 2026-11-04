@@ -4,7 +4,7 @@ import { isLocalHostname, LOCAL_HOSTNAMES } from "./design-url.mjs";
 
 // design-diff の Chrome はサンドボックスの外で動き、ページの JS は AI が書く。開発サーバーと --allow-domain 以外へ通信させると、
 // 承認画面に出ない宛先へ、AI が読んだ内容を送れてしまう。
-// Playwright の route はリダイレクトの 2 回目以降の要求を通らず、WebSocket も別扱いなので、Chrome の全通信をこの代理サーバーに通して止める
+// Playwright の route はリダイレクトの 2 回目以降の要求を通らず、WebSocket も別扱いなので、Chrome の通信をすべてこの代理サーバーに通し、許可していない宛先への通信を遮断する
 
 // ワイルドカードやポートを受け付けると、承認画面に並ぶ文字列から、許可する宛先の範囲を人が読み取りにくくなる
 const DOMAIN_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/;
@@ -18,7 +18,8 @@ export function isAllowedHost(hostname, allowDomains) {
 	return isLocalHostname(host) || allowDomains.includes(host);
 }
 
-// Chrome の既定の除外（<-loopback> で外す）には 169.254/16 のようなリンクローカルの宛先も含まれるので、外したうえで --url と同じ宛先だけを直接つなぐ
+// Chrome が既定で代理サーバーを通さずに直接つなぐ宛先には、169.254/16 のようなリンクローカルの宛先も含まれる。
+// <-loopback> でこの既定を外し、--url と同じ規則の宛先だけを直接つなぐ
 export const PROXY_BYPASS = [...LOCAL_HOSTNAMES, "*.localhost", "<-loopback>"].join(",");
 
 const CONNECT_TARGET = /^(\[[^\]]+\]|[^:]+):(\d+)$/;

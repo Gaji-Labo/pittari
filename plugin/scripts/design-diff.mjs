@@ -176,7 +176,7 @@ function cropToPaintedBox(png, rect) {
 	return cropped;
 }
 
-// 代理サーバーにはページの通信だけでなく Chrome 自身の更新確認なども届くので、止めた宛先はページの要求から拾う
+// 代理サーバーにはページの通信だけでなく Chrome 自身の更新確認なども届くので、遮断した外部のホストはページの要求から拾う
 const blockedRequests = [];
 
 function isBlockedUrl(value) {
@@ -196,7 +196,7 @@ async function captureActual(proxy) {
 		browser = await chromium.launch({
 			channel: "chrome",
 			proxy: { server: proxy.server, bypass: PROXY_BYPASS },
-			// WebRTC の UDP は代理サーバーを通らずに外へ出られる
+			// WebRTC の UDP の通信は代理サーバーを通らないので、Chrome の起動引数で止める
 			args: ["--webrtc-ip-handling-policy=disable_non_proxied_udp"],
 		});
 	} catch (error) {
@@ -211,12 +211,12 @@ async function captureActual(proxy) {
 			if (isBlockedUrl(request.url())) blockedRequests.push({ url: request.url(), resourceType: request.resourceType() });
 		});
 		const page = await context.newPage();
-		// 止めた先へ移ったページは Chrome のエラー画面になり、--allow-domain の宛先へ移ったページは外部のページになるので、
+		// 遮断した外部のホストへ移ったページは Chrome のエラー画面になり、--allow-domain の宛先へ移ったページは外部のページになるので、
 		// どちらも撮影できたとしても実装の描画ではない
 		const throwIfLeftDevServer = () => {
 			if (isLocalDevServerUrl(page.url())) return;
 			throw new CaptureError(
-				`ページが開発サーバーの外へ移ったので、撮影せずに終えました（移った先: ${page.url()}。止めた宛先へ移ったときは Chrome のエラー画面の URL になる）\n開発サーバーのリダイレクトや、location を書き換えるスクリプトを確かめてください。`,
+				`ページが開発サーバーの外へ移ったので、撮影せずに終えました（移った先: ${page.url()}。遮断した外部のホストへ移ったときは Chrome のエラー画面の URL になる）\n開発サーバーのリダイレクトや、location を書き換えるスクリプトを確かめてください。`,
 			);
 		};
 		try {
@@ -599,7 +599,7 @@ if (excludedPixels > 0) {
 	console.log(`比較から外した範囲: ${excludedCount} 件（${excludedPixels} 画素、diffRatio の分母から除く。diff.png では青で塗る）`);
 }
 if (blockedHosts.size > 0) {
-	console.log("外部への通信を止めた宛先（--allow-domain に無いホスト。資源の種類と件数）:");
+	console.log("読み込めなかった外部のホスト（--allow-domain で許可していないので遮断した。リソースの種類と件数）:");
 	for (const [host, resourceTypes] of blockedHosts) {
 		console.log(`  ${host}: ${Object.entries(resourceTypes).map(([type, count]) => `${type} ${count} 件`).join(", ")}`);
 	}

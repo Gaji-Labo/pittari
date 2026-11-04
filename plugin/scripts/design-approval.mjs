@@ -8,8 +8,9 @@ import { isValidAllowDomain } from "./design-network.mjs";
 // 日をおいて再開したセッションで、承認した経緯を人が覚えていない宛先や、その後に持ち主が変わった宛先を尋ねずに使わないよう、セッションを終えたら忘れる
 
 // 承認画面に並べる宛先と実際に渡る引数が食い違わないよう、design-diff の名前を含むコマンドは、シェルが何も書き換えない決まった形のときだけ通す。
-// シェルの規則を再現して実行の有無を見分ける方法では、timeout などを前に付けた形のように、サンドボックスの除外ルールが一致する形を
-// 1 つ見落とすたびに承認を飛ばせる。名前を含むだけで実行しないコマンドまで拒否するのは、その代わりに受け入れる
+// シェルの規則を再現して design-diff を実行するかを見分ける方法では、timeout などを前に付けた形のように、サンドボックスの除外ルールに一致する形を
+// hook が 1 つ見落とすたびに、AI は承認画面を通さずに外部の宛先を許可できる。
+// 代わりに、名前を含むだけで design-diff を実行しないコマンドも拒否する
 const WORD = String.raw`(?:[A-Za-z0-9_./:=@%+,-]|'[^']*'|"[^"$\x60\\]*")+`;
 const RUNNABLE_DESIGN_DIFF = new RegExp(String.raw`^design-diff((?:[ \t]+${WORD})*)[ \t]*$`);
 
@@ -30,7 +31,7 @@ function allowDomainsIn(args) {
 }
 
 const DENY_REASON = [
-	"design-diff は、design-diff で始まる単独のコマンドとして実行してください。前置き（cd、環境変数、timeout など）・&& などのつなぎ・変数・リダイレクトは使えません。",
+	"design-diff は、design-diff で始まる単独のコマンドとして実行してください。cd・環境変数・timeout などを前に付けた形、&& などでほかのコマンドとつないだ形、変数、リダイレクトは使えません。",
 	"英数字と . / : = @ % + , - _ 以外の文字を含む引数は引用符で囲み、$・バッククォート・バックスラッシュを含む引数は単一引用符で囲みます。",
 	"design-diff のコードや出力を探す・読むときは、Bash ではなく Grep・Read ツールを使ってください。",
 ].join("\n");
@@ -97,7 +98,7 @@ if (input?.hook_event_name === "PostToolUse" || input?.hook_event_name === "Post
 	process.exit(0);
 }
 
-// Claude Code の入力の形が変わって読めなくなったときに、黙って承認を回さなくなるのを避ける
+// Claude Code の入力の形が変わって hook がコマンドを読めなくなったときに、外部の宛先を許可する実行が承認画面を通らずに実行されないようにする
 if (command === null) {
 	decide("ask", "design-to-code の hook が Bash のコマンドを読み取れませんでした。外部サイトとの通信を見逃さないよう、すべての Bash の実行を承認画面に回しています。");
 }

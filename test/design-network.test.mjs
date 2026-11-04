@@ -74,7 +74,7 @@ describe("代理サーバー", () => {
 	test("許可していないホストへの http の要求は、応答を返さずに切る", async () => {
 		assert.equal(await getThroughProxy("http://example.com/?d=secret"), "切断");
 	});
-	test("IP アドレスを直接書いた宛先も止める", async () => {
+	test("IP アドレスを直接書いた宛先も遮断する", async () => {
 		assert.equal(await connectThroughProxy("93.184.215.14:443"), "切断");
 	});
 	test("開発サーバーへの要求は中継する", async () => {

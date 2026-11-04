@@ -2,8 +2,7 @@ import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, ren
 import { randomUUID } from "node:crypto";
 import { join, relative, resolve, sep } from "node:path";
 
-// サンドボックスの中の AI は、design-diff がパスを確かめてから読み書きするまでの間に、.design-diff の中をリンクに差し替えられる。
-// 差し替えられてもリンク先を読み書きしないよう、.design-diff の読み書きはすべてこのモジュールを通す
+// サンドボックスの中の AI に .design-diff の中をリンクへ差し替えられても、リンク先を読み書きしないよう、.design-diff の読み書きはすべてこのモジュールを通す
 export class UnsafeResultsPathError extends Error {}
 
 // Node には、開いたディレクトリを基準にしてファイルを開く手段（openat）が無いので、代わりにそのディレクトリへ移り、相対パスで開く。
@@ -15,7 +14,7 @@ function enterResultsDir(projectDir, segments, { create }) {
 	try {
 		process.chdir(projectDir);
 	} catch (error) {
-		// Stop hook に渡るセッションの cwd は、消した worktree のように既に無いことがある。Stop hook が次の候補のディレクトリを探せるよう、記録が無いものとして扱う
+		// Stop hook に渡る cwd は、消した worktree のように既に無いことがある。次の候補のディレクトリを探せるよう、記録が無いものとして扱う
 		if (!create && error.code === "ENOENT") return false;
 		throw error;
 	}
@@ -38,7 +37,6 @@ function enterResultsDir(projectDir, segments, { create }) {
 			throw error;
 		}
 		if (process.cwd() !== expected) {
-			// 大文字と小文字を区別しないファイルシステムでは、セレクタ #cv と #CV から作ったラベルが同じディレクトリを指し、計測の結果が混ざる
 			if (process.cwd().toLowerCase() === expected.toLowerCase()) {
 				throw new UnsafeResultsPathError(`${expected} と大文字・小文字だけが違う ${process.cwd()} が既にあります。--out で別の名前を指定してください`);
 			}
@@ -115,8 +113,7 @@ export const INPUTS_DIR = "inputs";
 export function readInputFile(projectDir, path) {
 	const segments = relative(join(projectDir, ".design-diff", INPUTS_DIR), resolve(projectDir, path)).split(sep);
 	const name = segments.pop();
-	// inputs から見た相対パスは、inputs の外を指すなら .. で始まる。inputs そのものを指すなら name が空に、.design-diff そのものを指すなら name が .. になる。
-	// ディレクトリとファイルがリンクでないかは readResultsFile が開くときに確かめるので、ここではこれらだけを弾く
+	// inputs の外は .. で始まり、inputs・.design-diff そのものは name が空か .. になる。リンクでないかは readResultsFile が確かめるので、ここではこれらだけを弾く
 	if (segments[0] === ".." || name === "" || name === "." || name === "..") {
 		throw new UnsafeResultsPathError(`.design-diff/${INPUTS_DIR}/ の下のファイルではないので読みません: ${path}`);
 	}

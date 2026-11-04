@@ -86,7 +86,6 @@ if (input?.hook_event_name === "PostToolUse" || input?.hook_event_name === "Post
 	process.exit(0);
 }
 
-// Claude Code の入力の形が変わって hook がコマンドを読めなくなっても、外部の宛先を許可する実行が承認画面を通らずに動かないよう、すべての Bash の実行を承認画面に回す
 if (command === null) {
 	decide("ask", "design-to-code の hook が Bash のコマンドを読み取れませんでした。外部サイトとの通信を見逃さないよう、すべての Bash の実行を承認画面に回しています。");
 }

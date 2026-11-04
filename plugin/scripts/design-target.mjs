@@ -16,8 +16,7 @@ export function targetLabel({ selector, width, designWidth, out }) {
 		if (!/^[A-Za-z0-9_-]+$/.test(out)) {
 			throw new Error(`--out には英数字・-・_ だけの名前を指定してください（渡された値: "${out}"）`);
 		}
-		// sessions・inputs をラベルにしても、計測の結果のファイル名は登録や入力のファイルと重ならないので、動作に支障はない。
-		// ただ、計測の結果と登録や入力のファイルが同じディレクトリに混ざり、どれが何のファイルかを見分けにくくなるので弾く
+		// ファイル名は重ならないので動作に支障はないが、計測の結果と登録や入力のファイルが同じディレクトリに混ざって見分けにくくなるので弾く
 		if (out === SESSIONS_DIR) throw new Error(`--out に "${SESSIONS_DIR}" は使えません。Stop hook の登録の置き場所と重なります`);
 		if (out === INPUTS_DIR) throw new Error(`--out に "${INPUTS_DIR}" は使えません。--metadata・--texts のファイルの置き場所と重なります`);
 		return out;

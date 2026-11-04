@@ -1,5 +1,4 @@
-// design-diff を子プロセスで実際に動かす。plugin の依存と Chrome が要り、サンドボックスの中では Chrome が起動しないので、
-// test/*.test.mjs とは分けて実行する
+// plugin の依存と Chrome が要り、サンドボックスの中では Chrome が起動しないので、test/*.test.mjs とは分けて実行する
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";

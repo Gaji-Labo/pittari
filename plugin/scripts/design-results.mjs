@@ -122,8 +122,9 @@ export const INPUTS_DIR = "inputs";
 export function readInputFile(projectDir, path) {
 	const segments = relative(join(projectDir, ".design-diff", INPUTS_DIR), resolve(projectDir, path)).split(sep);
 	const name = segments.pop();
-	// inputs の外を指すパスは .. から始まる。.design-diff 自体を指すパスは名前だけが .. になるので、名前は . で始めさせない
-	if (segments[0] === ".." || !/^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(name)) {
+	// inputs の外を指すパスは .. から始まる。inputs 自体を指すパスは名前が空になり、.design-diff 自体を指すパスは名前が .. になる。
+	// この 3 つ以外の名前は、ディレクトリを readResultsFile が 1 階層ずつ検査し、ファイルもリンクかどうかを検査して開くので、制限しない
+	if (segments[0] === ".." || name === "" || name === "." || name === "..") {
 		throw new UnsafeResultsPathError(`.design-diff/${INPUTS_DIR}/ の下のファイルではないので読みません: ${path}`);
 	}
 	const text = readResultsFile(projectDir, [INPUTS_DIR, ...segments], name);

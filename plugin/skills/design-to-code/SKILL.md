@@ -72,7 +72,7 @@ Figma のデザインを、対象プロジェクトの規約に沿ってコー�
 - `get_variable_defs` — Step 3 の対応表の元データ。
 - 画像・アイコンがあれば `download_assets`。
 
-`design-diff` は、`--metadata` `--texts` で渡されたファイルのうち、`.design-diff/inputs/` の下にあるものしか読まない。入力の置き場所に保存するファイルの名前には英数字・`-`・`_`・`.` だけを使う。ファイル名に node id を入れるときは、`:` と `;` を `-` に置き換える。
+`design-diff` は、`--metadata` `--texts` で渡されたファイルのうち、`.design-diff/inputs/` の下にあるものしか読まない。
 
 ### デザイン画像の場合
 

@@ -159,6 +159,13 @@ describe("--metadata・--texts の入力", () => {
 		assert.equal(readInputFile(project, join(project, ".design-diff", "inputs", "s1", "texts.json")), "{}");
 	});
 
+	test(": ; や . 始まりを含む名前のファイルも読める", () => {
+		for (const name of ["1:2.xml", "I1:2;3:4.xml", ".hidden"]) {
+			writeFileSync(join(inputsDir(), name), name);
+			assert.equal(readInputFile(project, `.design-diff/inputs/s1/${name}`), name);
+		}
+	});
+
 	test("無いファイルは、読めなかったとしてエラーで終わる", () => {
 		inputsDir();
 		assert.throws(() => readInputFile(project, ".design-diff/inputs/s1/none.xml"), /ファイルがありません/);
@@ -183,7 +190,7 @@ describe("--metadata・--texts の入力", () => {
 			assertRefused(".design-diff/inputs/../sessions/s1.json");
 		});
 
-		for (const path of [".design-diff", ".design-diff/inputs", ".design-diff/inputs/s1/.hidden"]) {
+		for (const path of [".design-diff", ".design-diff/inputs"]) {
 			test(path, () => {
 				inputsDir();
 				assertRefused(path);

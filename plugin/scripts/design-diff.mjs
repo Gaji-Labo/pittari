@@ -104,8 +104,8 @@ if (values.texts) {
 	}
 	try {
 		nodeTexts = JSON.parse(textsSource);
-	} catch {
-		fail(`--texts のファイルを JSON として読めませんでした: ${values.texts}`);
+	} catch (error) {
+		fail(`--texts のファイルを JSON として読めませんでした: ${values.texts}\n${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 

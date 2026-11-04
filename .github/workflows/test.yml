@@ -21,3 +21,6 @@ jobs:
         with:
           node-version: 24
       - run: node --test "test/*.test.mjs"
+      # design-diff を実際に動かすテストは、plugin の依存と Chrome が要る。GitHub のランナーには Chrome が入っている
+      - run: npm ci --prefix plugin
+      - run: node --test "test/e2e/*.test.mjs"

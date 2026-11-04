@@ -6,7 +6,7 @@ import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 import { collectElementBoxes, compareEdges, formatEdgeReport } from "./design-edges.mjs";
 import { collectDomBoxes, compareLayout, formatLayoutReport, parseMetadata } from "./design-layout.mjs";
-import { appendResultsFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
+import { appendResultsFile, readInputFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
 import { RUN_LOG_FILE, targetLabel, workingTreeHash } from "./design-target.mjs";
 import { isLocalDevServerUrl } from "./design-url.mjs";
 
@@ -81,12 +81,15 @@ const hideSelector = values.hide;
 const excludeSelectors = values.exclude ?? [];
 const layoutTolerance = Number(values["layout-tolerance"]);
 
+// スクリプトの置き場所に依存しないよう、入力と出力の置き場所は実行時のカレントディレクトリ（プロジェクトルート）を基準にする
+const projectDir = process.cwd();
+
 // Figma の get_metadata の出力を渡されたときだけ、画素差分に加えて要素ごとの箱も比べる
 let figmaNodes = null;
 let metadataWarnings = [];
 if (values.metadata) {
 	try {
-		({ nodes: figmaNodes, warnings: metadataWarnings } = parseMetadata(values.metadata.map((file) => readFileSync(file, "utf8"))));
+		({ nodes: figmaNodes, warnings: metadataWarnings } = parseMetadata(values.metadata.map((file) => readInputFile(projectDir, file))));
 	} catch (error) {
 		fail(`--metadata の XML を読めませんでした\n${error instanceof Error ? error.message : String(error)}`);
 	}
@@ -95,15 +98,14 @@ let nodeTexts = {};
 if (values.texts) {
 	let textsSource;
 	try {
-		textsSource = readFileSync(values.texts, "utf8");
+		textsSource = readInputFile(projectDir, values.texts);
 	} catch (error) {
 		fail(`--texts のファイルを読めませんでした: ${values.texts}\n${error instanceof Error ? error.message : String(error)}`);
 	}
 	try {
 		nodeTexts = JSON.parse(textsSource);
-	} catch {
-		// JSON.parse のエラー文はファイルの先頭を含む。design-diff はサンドボックスの外で読むので、読むのを禁じたファイルの中身を出さない
-		fail(`--texts のファイルを JSON として読めませんでした: ${values.texts}`);
+	} catch (error) {
+		fail(`--texts のファイルを JSON として読めませんでした: ${values.texts}\n${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
@@ -114,10 +116,9 @@ try {
 	fail(error.message);
 }
 
-// スクリプトの置き場所に依存しないよう、出力先は実行時のカレントディレクトリ（プロジェクトルート）を基準にする
-const projectDir = process.cwd();
-
 let designPng;
+// PNG として解釈できないファイルは中身を出さずにエラーで終わり、サンドボックスの中から禁じられた場所のファイルを PNG に作り変えることもできないので、
+// --metadata・--texts と違って置き場所を限らない
 try {
 	designPng = PNG.sync.read(readFileSync(designPath));
 } catch (error) {

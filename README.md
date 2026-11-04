@@ -12,7 +12,7 @@ Figma の URL またはデザイン画像を渡すと、Claude Code が対象プ
    /plugin install design-to-code --marketplace kinjo3/design-to-code
    ```
 
-3. サンドボックス内では Chrome が起動しないため、Claude Code の設定の `sandbox.excludedCommands` に `design-diff *` を足す。`Bash(design-diff *)` は許可ルール（`permissions.allow`）に足さない。`design-diff` はサンドボックスの外で動き、`--design` などで渡されたファイルをサンドボックスの制限を受けずに読むので、実行のたびに引数を確かめてから承認する。
+3. サンドボックス内では Chrome が起動しないため、Claude Code の設定の `sandbox.excludedCommands` に `design-diff *` を足す。`Bash(design-diff *)` は許可ルール（`permissions.allow`）に足さない。`design-diff` はサンドボックスの外で動き、`--design` で渡された PNG をサンドボックスの制限を受けずに読むので、実行のたびに引数を確かめてから承認する。
 
 4. 差分チェックの出力先 `.design-diff/` を `.gitignore` に足す。
 

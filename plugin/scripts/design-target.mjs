@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { readResultsFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
+import { INPUTS_DIR, readResultsFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
 
 // Stop hook の登録を置くディレクトリ。計測の出力先と同じ .design-diff の下にあり、ラベルに使うと登録と計測の結果が同じディレクトリに混ざる。
 // ファイル名は重ならないので動きは壊れないが、どれが登録かを見分けにくくなるので、ラベルには使わせない
@@ -21,6 +21,8 @@ export function targetLabel({ selector, width, designWidth, out }) {
 			throw new Error(`--out には英数字・-・_ だけの名前を指定してください（渡された値: "${out}"）`);
 		}
 		if (out === SESSIONS_DIR) throw new Error(`--out に "${SESSIONS_DIR}" は使えません。Stop hook の登録の置き場所と重なります`);
+		// sessions と同じく、計測の結果と入力のファイルが同じディレクトリに混ざって見分けにくくなる
+		if (out === INPUTS_DIR) throw new Error(`--out に "${INPUTS_DIR}" は使えません。--metadata・--texts のファイルの置き場所と重なります`);
 		return out;
 	}
 	// 同じセレクタ・同じビューポートで書き出し幅だけ変えた実行が上書きし合わないよう、指定時は幅を重ねる

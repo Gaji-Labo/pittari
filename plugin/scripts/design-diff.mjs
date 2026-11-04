@@ -176,7 +176,7 @@ function cropToPaintedBox(png, rect) {
 	return cropped;
 }
 
-// 代理サーバーにはページの通信だけでなく Chrome 自身の更新確認なども届くので、遮断した外部のホストはページの要求から拾う
+// プロキシサーバーにはページの通信だけでなく Chrome 自身の更新確認なども届くので、遮断した外部のホストはページの要求から拾う
 const blockedRequests = [];
 
 function isBlockedUrl(value) {
@@ -196,7 +196,7 @@ async function captureActual(proxy) {
 		browser = await chromium.launch({
 			channel: "chrome",
 			proxy: { server: proxy.server, bypass: PROXY_BYPASS },
-			// WebRTC の UDP の通信は代理サーバーを通らないので、Chrome の起動引数で止める
+			// WebRTC の UDP の通信はプロキシサーバーを通らないので、Chrome の起動引数で止める
 			args: ["--webrtc-ip-handling-policy=disable_non_proxied_udp"],
 		});
 	} catch (error) {

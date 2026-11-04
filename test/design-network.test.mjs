@@ -27,7 +27,7 @@ describe("通信してよい宛先", () => {
 	});
 });
 
-describe("代理サーバー", () => {
+describe("プロキシサーバー", () => {
 	let devServer;
 	let devPort;
 	let proxy;

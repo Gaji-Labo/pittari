@@ -2,15 +2,14 @@ import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, ren
 import { randomUUID } from "node:crypto";
 import { join, relative, resolve, sep } from "node:path";
 
-// design-diff と Stop hook はサンドボックスの外で動くので、.design-diff の中のディレクトリやファイルを
-// サンドボックスの中からリンクに差し替えられると、サンドボックスが禁じている場所を読み書きしてしまう。
-// パスの確認と読み書きの間に差し替えられても防げるよう、ここを通さずに .design-diff を読み書きしない
+// サンドボックスの中の AI は、design-diff がパスを確かめてから読み書きするまでの間に、.design-diff の中をリンクに差し替えられる。
+// 差し替えられてもリンク先を読み書きしないよう、.design-diff の読み書きはすべてこのモジュールを通す
 export class UnsafeResultsPathError extends Error {}
 
-// Node にはディレクトリを開いたまま、その中のファイルを開く手段（openat）が無い。
-// 移ったあとのカレントディレクトリは、移る前にパスが差し替えられても実際に入ったディレクトリを指し続けるので、
-// 移った先が .design-diff の中だと確かめてから、相対パスで読み書きする。
-// 絶対パスで深い階層を作ると、途中の階層がリンクならリンク先にディレクトリを作るので、1 階層ずつ確かめながら下りる
+// Node には、開いたディレクトリを基準にしてファイルを開く手段（openat）が無いので、代わりにそのディレクトリへ移り、相対パスで開く。
+// 移ったあとにパスがリンクへ差し替えられても、カレントディレクトリは実際に入ったディレクトリのまま変わらない。
+// 絶対パスで深い階層を一度に作ると、途中の階層がリンクのときにリンク先へディレクトリを作ってしまう。
+// そのため 1 階層ずつ作って移り、移るたびに想定したパスにいるかを確かめる
 function enterResultsDir(projectDir, segments, { create }) {
 	// 登録のファイルに書かれたラベルもここに来るので、.. で .design-diff の外へ出させない
 	const invalid = segments.find((segment) => !/^[A-Za-z0-9_-]+$/.test(segment));
@@ -90,7 +89,6 @@ function replaceFile(name, data) {
 	}
 }
 
-// 呼び出し元の相対パスの解決を変えないよう、読み書きを終えたらカレントディレクトリを戻す
 function inResultsDir(projectDir, segments, options, action) {
 	const previous = process.cwd();
 	try {
@@ -114,16 +112,13 @@ export function appendResultsFile(projectDir, segments, name, data) {
 	inResultsDir(projectDir, segments, { create: true }, () => replaceFile(name, `${readRegularFile(name) ?? ""}${data}`));
 }
 
-// design-diff の --metadata・--texts で渡すファイルの置き場所
 export const INPUTS_DIR = "inputs";
 
-// design-diff はサンドボックスの外で動くので、渡されたパスをそのまま読むと、サンドボックスが読むのを禁じている場所のファイルの中身が
-// layout.json や報告に出る。サンドボックスの中から置けるファイルだけを読むよう、.design-diff/inputs の下に限る
 export function readInputFile(projectDir, path) {
 	const segments = relative(join(projectDir, ".design-diff", INPUTS_DIR), resolve(projectDir, path)).split(sep);
 	const name = segments.pop();
-	// inputs の外を指すパスは .. から始まる。inputs 自体を指すパスは名前が空になり、.design-diff 自体を指すパスは名前が .. になる。
-	// この 3 つ以外の名前は、ディレクトリを readResultsFile が 1 階層ずつ検査し、ファイルもリンクかどうかを検査して開くので、制限しない
+	// inputs から見た相対パスは、inputs の外を指すなら .. で始まる。inputs そのものを指すなら name が空に、.design-diff そのものを指すなら name が .. になる。
+	// ディレクトリとファイルがリンクでないかは readResultsFile が開くときに確かめるので、ここではこれらだけを弾く
 	if (segments[0] === ".." || name === "" || name === "." || name === "..") {
 		throw new UnsafeResultsPathError(`.design-diff/${INPUTS_DIR}/ の下のファイルではないので読みません: ${path}`);
 	}

@@ -14,6 +14,8 @@ Figma の URL またはデザイン画像を渡すと、Claude Code が対象プ
 
 3. サンドボックス内では Chrome が起動しないため、Claude Code の設定の `sandbox.excludedCommands` に `design-diff *` を足す。`Bash(design-diff *)` は許可ルール（`permissions.allow`）に足さない。`design-diff` はサンドボックスの外で動き、`--design` で渡された PNG をサンドボックスの制限を受けずに読むので、実行のたびに引数を確かめてから承認する。
 
+   撮影中の Chrome は、開発サーバーと、`--allow-domain` で渡したホストにだけ通信する。Web フォントなどの外部の宛先は、Claude Code がユーザーに許可を確かめたうえで `--allow-domain` に渡す。`--allow-domain` を付けた実行は、auto mode でも、プラグインの hook が「次の外部サイトと通信することを許可しますか？」と宛先を並べて承認を求める。同じセッションの間は、承認した宛先だけを使う実行では再び尋ねない。セッションを終えると承認を忘れるので、再開したセッションでは改めて尋ねる。並んだ宛先が、送ったデータを第三者が受け取れる宛先（オブジェクトストレージ、計測タグの送信先、誰でもサブドメインを持てるホスティングなど）でないかを確かめてから承認する。ページのコードは AI が書くので、許可した宛先へは、AI が読んだ内容を送れる。
+
 4. 差分チェックの出力先 `.design-diff/` を `.gitignore` に足す。
 
 5. Figma の URL から実装する場合は、Figma の MCP（`get_design_context` `get_screenshot` `get_variable_defs` `get_metadata` `download_assets`）を Claude Code に許可する。デザイン画像だけを使う場合は不要。

@@ -1,0 +1,28 @@
+{
+	"description": "外部サイトとの通信を許可する design-diff の実行は、auto mode でも人の承認画面に回す。承認した宛先はセッションの間だけ覚え、セッションを終えたら消す。承認の hook が失敗したときは、承認を飛ばさないよう Bash の実行を止める",
+	"hooks": {
+		"PreToolUse": [
+			{
+				"matcher": "Bash",
+				"hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/design-approval.mjs\"", "onFailure": "block" }]
+			}
+		],
+		"PostToolUse": [
+			{
+				"matcher": "Bash",
+				"hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/design-approval.mjs\"" }]
+			}
+		],
+		"PostToolUseFailure": [
+			{
+				"matcher": "Bash",
+				"hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/design-approval.mjs\"" }]
+			}
+		],
+		"SessionEnd": [
+			{
+				"hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/design-approval.mjs\"" }]
+			}
+		]
+	}
+}

@@ -23,7 +23,7 @@
 | `actual.png` | 実装の描画結果 |
 | `diff.png` | 差分のある画素。比較から外した範囲は青で塗られる |
 | `compare.png` | `design.png` `actual.png` `diff.png` を縮小して横に並べた画像。比較から外した範囲は青で塗られる |
-| `summary.json` | 合否・`diffRatio`・差分のある画素の固まりの位置・比較から外した範囲（`excludedCssPx`）・通信を止めた外部の宛先（`blockedHosts`） |
+| `summary.json` | 合否・`diffRatio`・差分のある画素の固まりの位置・比較から外した範囲（`excludedCssPx`） |
 | `layout.json` | ノードごとの箱のずれ。Figma の URL から実装した場合だけ出る |
 | `edges.json` | 実装側の要素の辺ごとのずれと判定不能の辺。デザイン画像から実装した場合だけ出る |
 

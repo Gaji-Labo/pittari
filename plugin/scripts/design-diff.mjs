@@ -186,7 +186,7 @@ function isBlockedUrl(value) {
 	} catch {
 		return false;
 	}
-	return ["http:", "https:", "ws:", "wss:"].includes(parsed.protocol) && !isAllowedHost(parsed.hostname, allowDomains);
+	return ["http:", "https:"].includes(parsed.protocol) && !isAllowedHost(parsed.hostname, allowDomains);
 }
 
 async function captureActual(proxy) {
@@ -207,51 +207,25 @@ async function captureActual(proxy) {
 	try {
 		// 撮影ごとに新しいコンテキストで開くとオープニングなどの演出が毎回再生されるので、完成形を撮らせる
 		const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor, reducedMotion: "reduce" });
-		let page;
-		let offsiteNavigation = null;
-		// WebSocket の接続は requestfailed に出ない
-		context.on("page", (openedPage) =>
-			openedPage.on("websocket", (webSocket) => {
-				if (isBlockedUrl(webSocket.url())) blockedRequests.push({ url: webSocket.url(), resourceType: "websocket" });
-			}),
-		);
 		context.on("requestfailed", (request) => {
-			if (!isBlockedUrl(request.url())) return;
-			blockedRequests.push({ url: request.url(), resourceType: request.resourceType() });
-			if (!request.isNavigationRequest()) return;
-			// Service Worker の要求には frame が無く、frame() が例外を投げる
-			let frame;
-			try {
-				frame = request.frame();
-			} catch {
-				return;
-			}
-			if (frame === page?.mainFrame()) offsiteNavigation ??= request.url();
+			if (isBlockedUrl(request.url())) blockedRequests.push({ url: request.url(), resourceType: request.resourceType() });
 		});
+		const page = await context.newPage();
 		// 止めた先へ移ったページは Chrome のエラー画面になり、--allow-domain の宛先へ移ったページは外部のページになるので、
 		// どちらも撮影できたとしても実装の描画ではない
 		const throwIfLeftDevServer = () => {
-			if (offsiteNavigation === null) return;
+			if (isLocalDevServerUrl(page.url())) return;
 			throw new CaptureError(
-				`ページが開発サーバーの外へ移ろうとしたので、撮影せずに終えました: ${offsiteNavigation}\n開発サーバーのリダイレクトや、location を書き換えるスクリプトを確かめてください。`,
+				`ページが開発サーバーの外へ移ったので、撮影せずに終えました（移った先: ${page.url()}。止めた宛先へ移ったときは Chrome のエラー画面の URL になる）\n開発サーバーのリダイレクトや、location を書き換えるスクリプトを確かめてください。`,
 			);
 		};
-		page = await context.newPage();
-		// 止めた先への移動は Chrome のエラー画面（chrome-error:）への移動になるので、requestfailed の側で拾う
-		page.on("framenavigated", (frame) => {
-			if (frame !== page.mainFrame()) return;
-			const navigatedUrl = frame.url();
-			if (/^https?:/i.test(navigatedUrl) && !isLocalDevServerUrl(navigatedUrl)) offsiteNavigation ??= navigatedUrl;
-		});
 		try {
 			await page.goto(url, { waitUntil: "networkidle" });
 		} catch (error) {
-			throwIfLeftDevServer();
 			throw new CaptureError(
-				`ページの読み込みに失敗しました: ${url}\n開発サーバーが起動しているか、--url の値が正しいか確認してください。\n${errorText(error)}`,
+				`ページの読み込みに失敗しました: ${url}\n開発サーバーが起動しているか、--url の値が正しいか、開発サーバーが外部へリダイレクトしていないか確認してください。\n${errorText(error)}`,
 			);
 		}
-		throwIfLeftDevServer();
 		// ヘッドレスの Chromium はスクロールバーを幅 0 で隠すが、scrollbar-gutter: stable はその幅を確保し続けるので、
 		// 見本画像には無い空白の帯が右端に写る
 		await page.addStyleTag({ content: ":root { scrollbar-gutter: auto !important; }" });
@@ -335,7 +309,6 @@ for (const { url: blockedUrl, resourceType } of blockedRequests) {
 	types[resourceType] = (types[resourceType] ?? 0) + 1;
 	blockedHosts.set(host, types);
 }
-const blockedHostReports = [...blockedHosts].map(([host, resourceTypes]) => ({ host, resourceTypes }));
 
 const screenshotPng = PNG.sync.read(actualBuffer);
 const actualPng = cropToPaintedBox(screenshotPng, targetRect);
@@ -566,7 +539,6 @@ const summary = {
 	totalPixels,
 	excludedPixels,
 	excludedCssPx: excludedReports,
-	blockedHosts: blockedHostReports,
 	diffClustersCssPx: clusterReports,
 	designSize: { width: designPng.width, height: designPng.height },
 	actualSize: { width: actualPng.width, height: actualPng.height },
@@ -626,9 +598,9 @@ if (excludedPixels > 0) {
 	const excludedCount = excludedReports.reduce((sum, report) => sum + report.rectsCssPx.length, 0);
 	console.log(`比較から外した範囲: ${excludedCount} 件（${excludedPixels} 画素、diffRatio の分母から除く。diff.png では青で塗る）`);
 }
-if (blockedHostReports.length > 0) {
+if (blockedHosts.size > 0) {
 	console.log("外部への通信を止めた宛先（--allow-domain に無いホスト。資源の種類と件数）:");
-	for (const { host, resourceTypes } of blockedHostReports) {
+	for (const [host, resourceTypes] of blockedHosts) {
 		console.log(`  ${host}: ${Object.entries(resourceTypes).map(([type, count]) => `${type} ${count} 件`).join(", ")}`);
 	}
 }

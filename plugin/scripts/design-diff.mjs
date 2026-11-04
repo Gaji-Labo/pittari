@@ -7,7 +7,7 @@ import { PNG } from "pngjs";
 import { collectElementBoxes, compareEdges, formatEdgeReport } from "./design-edges.mjs";
 import { collectDomBoxes, compareLayout, formatLayoutReport, parseMetadata } from "./design-layout.mjs";
 import { isAllowedHost, isValidAllowDomain, PROXY_BYPASS, startBlockingProxy } from "./design-network.mjs";
-import { appendResultsFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
+import { appendResultsFile, readInputFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
 import { RUN_LOG_FILE, targetLabel, workingTreeHash } from "./design-target.mjs";
 import { isLocalDevServerUrl } from "./design-url.mjs";
 
@@ -88,12 +88,15 @@ const hideSelector = values.hide;
 const excludeSelectors = values.exclude ?? [];
 const layoutTolerance = Number(values["layout-tolerance"]);
 
+// スクリプトの置き場所に依存しないよう、入力と出力の置き場所は実行時のカレントディレクトリ（プロジェクトルート）を基準にする
+const projectDir = process.cwd();
+
 // Figma の get_metadata の出力を渡されたときだけ、画素差分に加えて要素ごとの箱も比べる
 let figmaNodes = null;
 let metadataWarnings = [];
 if (values.metadata) {
 	try {
-		({ nodes: figmaNodes, warnings: metadataWarnings } = parseMetadata(values.metadata.map((file) => readFileSync(file, "utf8"))));
+		({ nodes: figmaNodes, warnings: metadataWarnings } = parseMetadata(values.metadata.map((file) => readInputFile(projectDir, file))));
 	} catch (error) {
 		fail(`--metadata の XML を読めませんでした\n${error instanceof Error ? error.message : String(error)}`);
 	}
@@ -102,15 +105,14 @@ let nodeTexts = {};
 if (values.texts) {
 	let textsSource;
 	try {
-		textsSource = readFileSync(values.texts, "utf8");
+		textsSource = readInputFile(projectDir, values.texts);
 	} catch (error) {
 		fail(`--texts のファイルを読めませんでした: ${values.texts}\n${error instanceof Error ? error.message : String(error)}`);
 	}
 	try {
 		nodeTexts = JSON.parse(textsSource);
-	} catch {
-		// JSON.parse のエラー文はファイルの先頭を含む。design-diff はサンドボックスの外で読むので、読むのを禁じたファイルの中身を出さない
-		fail(`--texts のファイルを JSON として読めませんでした: ${values.texts}`);
+	} catch (error) {
+		fail(`--texts のファイルを JSON として読めませんでした: ${values.texts}\n${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
@@ -121,10 +123,9 @@ try {
 	fail(error.message);
 }
 
-// スクリプトの置き場所に依存しないよう、出力先は実行時のカレントディレクトリ（プロジェクトルート）を基準にする
-const projectDir = process.cwd();
-
 let designPng;
+// PNG として解釈できないファイルは中身を出さずにエラーで終わり、サンドボックスの中から禁じられた場所のファイルを PNG に作り変えることもできないので、
+// --metadata・--texts と違って置き場所を限らない
 try {
 	designPng = PNG.sync.read(readFileSync(designPath));
 } catch (error) {
@@ -193,8 +194,12 @@ async function captureActual(proxy) {
 	let browser;
 	try {
 		// playwright が版を固定して配る Chromium ではなく自動更新される Chrome を使い、ブラウザの脆弱性の修正をプラグインの更新から切り離す
+		// design-diff は Claude Code のサンドボックスの外で動くので、Chrome 自身のサンドボックスまで外すと、
+		// ページが Chrome の脆弱性を 1 つ突くだけでユーザーの権限でファイルを読んだりコマンドを動かしたりできてしまう。
+		// Playwright は既定で Chrome のサンドボックスを外すため、明示して有効にする
 		browser = await chromium.launch({
 			channel: "chrome",
+			chromiumSandbox: true,
 			proxy: { server: proxy.server, bypass: PROXY_BYPASS },
 			// WebRTC の UDP の通信はプロキシサーバーを通らないので、Chrome の起動引数で止める
 			args: ["--webrtc-ip-handling-policy=disable_non_proxied_udp"],

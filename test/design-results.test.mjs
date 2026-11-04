@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	appendResultsFile,
+	readInputFile,
 	readResultsFile,
 	UnsafeResultsPathError,
 	writeResultsFiles,
@@ -134,5 +135,97 @@ describe("ファイルがリンクなら、リンク先を読み書きしない"
 		symlinkSync(secret, join(labelDir("sessions"), "s1.json"));
 		assert.throws(() => readResultsFile(project, ["sessions"], "s1.json"), UnsafeResultsPathError);
 		assertOutsideUntouched();
+	});
+});
+
+describe("--metadata・--texts の入力", () => {
+	function inputsDir(session = "s1") {
+		const dir = join(project, ".design-diff", "inputs", session);
+		mkdirSync(dir, { recursive: true });
+		return dir;
+	}
+
+	function assertRefused(path, error = UnsafeResultsPathError) {
+		assert.throws(
+			() => readInputFile(project, path),
+			(thrown) => thrown instanceof error && !thrown.message.includes("SECRET"),
+		);
+	}
+
+	test(".design-diff/inputs の下の XML と JSON を読める", () => {
+		writeFileSync(join(inputsDir(), "1-2.xml"), "<frame />");
+		writeFileSync(join(inputsDir(), "texts.json"), "{}");
+		assert.equal(readInputFile(project, ".design-diff/inputs/s1/1-2.xml"), "<frame />");
+		assert.equal(readInputFile(project, join(project, ".design-diff", "inputs", "s1", "texts.json")), "{}");
+	});
+
+	test(": ; や . 始まりを含む名前のファイルも読める", () => {
+		for (const name of ["1:2.xml", "I1:2;3:4.xml", ".hidden"]) {
+			writeFileSync(join(inputsDir(), name), name);
+			assert.equal(readInputFile(project, `.design-diff/inputs/s1/${name}`), name);
+		}
+	});
+
+	test("無いファイルは、読めなかったとしてエラーで終わる", () => {
+		inputsDir();
+		assert.throws(() => readInputFile(project, ".design-diff/inputs/s1/none.xml"), /ファイルがありません/);
+	});
+
+	describe("inputs の外のパスは読まない", () => {
+		test("/etc/hosts", () => assertRefused("/etc/hosts"));
+
+		test("プロジェクトの外の ../x.json", () => {
+			writeFileSync(join(project, "..", "x.json"), "SECRET");
+			assertRefused("../x.json");
+		});
+
+		test("プロジェクト直下の package.json", () => {
+			writeFileSync(join(project, "package.json"), "SECRET");
+			assertRefused("package.json");
+		});
+
+		test(".design-diff の中の inputs 以外", () => {
+			writeFileSync(join(labelDir("sessions"), "s1.json"), "SECRET");
+			assertRefused(".design-diff/sessions/s1.json");
+			assertRefused(".design-diff/inputs/../sessions/s1.json");
+		});
+
+		for (const path of [".design-diff", ".design-diff/inputs"]) {
+			test(path, () => {
+				inputsDir();
+				assertRefused(path);
+			});
+		}
+	});
+
+	describe("リンクなら読まない", () => {
+		test("ファイルがシンボリックリンク", () => {
+			symlinkSync(secret, join(inputsDir(), "1-2.xml"));
+			assertRefused(".design-diff/inputs/s1/1-2.xml");
+		});
+
+		test("ファイルがハードリンク", () => {
+			linkSync(secret, join(inputsDir(), "1-2.xml"));
+			assertRefused(".design-diff/inputs/s1/1-2.xml");
+		});
+
+		test("inputs がシンボリックリンク", () => {
+			mkdirSync(join(project, ".design-diff"));
+			symlinkSync(outside, join(project, ".design-diff", "inputs"));
+			assertRefused(".design-diff/inputs/secret.txt");
+		});
+
+		test("inputs の下のディレクトリがシンボリックリンク", () => {
+			mkdirSync(join(project, ".design-diff", "inputs"), { recursive: true });
+			symlinkSync(outside, join(project, ".design-diff", "inputs", "s1"));
+			assertRefused(".design-diff/inputs/s1/secret.txt");
+		});
+
+		test(".design-diff がシンボリックリンク", () => {
+			mkdirSync(join(outside, "inputs"));
+			writeFileSync(join(outside, "inputs", "1-2.xml"), "SECRET");
+			symlinkSync(outside, join(project, ".design-diff"));
+			assertRefused(".design-diff/inputs/1-2.xml");
+		});
 	});
 });

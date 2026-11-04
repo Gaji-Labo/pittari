@@ -1,6 +1,6 @@
 import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 
 // design-diff と Stop hook はサンドボックスの外で動くので、.design-diff の中のディレクトリやファイルを
 // サンドボックスの中からリンクに差し替えられると、サンドボックスが禁じている場所を読み書きしてしまう。
@@ -112,4 +112,22 @@ export function writeResultsFiles(projectDir, segments, files) {
 
 export function appendResultsFile(projectDir, segments, name, data) {
 	inResultsDir(projectDir, segments, { create: true }, () => replaceFile(name, `${readRegularFile(name) ?? ""}${data}`));
+}
+
+// design-diff の --metadata・--texts で渡すファイルの置き場所
+export const INPUTS_DIR = "inputs";
+
+// design-diff はサンドボックスの外で動くので、渡されたパスをそのまま読むと、サンドボックスが読むのを禁じている場所のファイルの中身が
+// layout.json や報告に出る。サンドボックスの中から置けるファイルだけを読むよう、.design-diff/inputs の下に限る
+export function readInputFile(projectDir, path) {
+	const segments = relative(join(projectDir, ".design-diff", INPUTS_DIR), resolve(projectDir, path)).split(sep);
+	const name = segments.pop();
+	// inputs の外を指すパスは .. から始まる。inputs 自体を指すパスは名前が空になり、.design-diff 自体を指すパスは名前が .. になる。
+	// この 3 つ以外の名前は、ディレクトリを readResultsFile が 1 階層ずつ検査し、ファイルもリンクかどうかを検査して開くので、制限しない
+	if (segments[0] === ".." || name === "" || name === "." || name === "..") {
+		throw new UnsafeResultsPathError(`.design-diff/${INPUTS_DIR}/ の下のファイルではないので読みません: ${path}`);
+	}
+	const text = readResultsFile(projectDir, [INPUTS_DIR, ...segments], name);
+	if (text === null) throw new Error(`ファイルがありません: ${path}`);
+	return text;
 }

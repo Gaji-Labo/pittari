@@ -7,9 +7,7 @@ import { join, relative, resolve, sep } from "node:path";
 export class UnsafeResultsPathError extends Error {}
 
 // Node には、開いたディレクトリを基準にしてファイルを開く手段（openat）が無いので、代わりにそのディレクトリへ移り、相対パスで開く。
-// 移ったあとにパスがリンクへ差し替えられても、カレントディレクトリは実際に入ったディレクトリのまま変わらない。
-// 絶対パスで深い階層を一度に作ると、途中の階層がリンクのときにリンク先へディレクトリを作ってしまう。
-// そのため 1 階層ずつ作って移り、移るたびに想定したパスにいるかを確かめる
+// 深い階層を一度に作ると途中のリンクの先にディレクトリを作ってしまうので、1 階層ずつ作って移り、移るたびに想定したパスにいるかを確かめる
 function enterResultsDir(projectDir, segments, { create }) {
 	// 登録のファイルに書かれたラベルもここに来るので、.. で .design-diff の外へ出させない
 	const invalid = segments.find((segment) => !/^[A-Za-z0-9_-]+$/.test(segment));

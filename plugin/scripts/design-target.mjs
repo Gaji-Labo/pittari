@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { INPUTS_DIR, readResultsFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
+import { INPUTS_DIR, isValidResultsDirName, readResultsFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
+import { isValidSessionId } from "./design-session.mjs";
 
 const SESSIONS_DIR = "sessions";
 
@@ -13,7 +14,8 @@ const MAX_ADJUSTMENTS = 3;
 
 export function targetLabel({ selector, width, designWidth, out }) {
 	if (out) {
-		if (!/^[A-Za-z0-9_-]+$/.test(out)) {
+		// 書き出すときに design-results も同じ規則で断るが、そのエラーは --out の名前を挙げないので、ここで先に断る
+		if (!isValidResultsDirName(out)) {
 			throw new Error(`--out には英数字・-・_ だけの名前を指定してください（渡された値: "${out}"）`);
 		}
 		// ファイル名は重ならないので動作に支障はないが、計測の結果と登録や入力のファイルが同じディレクトリに混ざって見分けにくくなるので弾く
@@ -108,7 +110,7 @@ function register(argv) {
 	const missing = ["session", "selector", "width"].filter((key) => !values[key]);
 	if (missing.length > 0) fail(`必須引数が不足しています: ${missing.map((k) => `--${k}`).join(", ")}`);
 	// SKILL.md の ${CLAUDE_SESSION_ID} が置き換えられない環境では、どのセッションの Stop hook からも見つからない登録になる
-	if (!/^[A-Za-z0-9_-]+$/.test(values.session)) {
+	if (!isValidSessionId(values.session)) {
 		fail(`--session がセッション ID になっていません（渡された値: "${values.session}"）。差分チェックの完走は Stop hook で確かめられません。`);
 	}
 	const projectDir = process.cwd();

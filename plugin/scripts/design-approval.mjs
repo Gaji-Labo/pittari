@@ -1,6 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isValidAllowDomain } from "./design-network.mjs";
+import { isValidSessionId } from "./design-session.mjs";
 
 // シェルの規則を再現して design-diff を実行するかを見分ける方法では、timeout などを前に付けた形のように、サンドボックスの除外ルールに一致する形を
 // hook が 1 つ見落とすたびに、AI は承認画面を通さずに外部の宛先を許可できる。そこで、シェルが何も書き換えない決まった形だけを通す
@@ -38,10 +39,9 @@ function parseDesignDiff(command) {
 
 // 承認の記録は、サンドボックスの中から書けないプラグインのデータ用ディレクトリに置き、AI が承認を偽れないようにする。
 // 並行して終えた実行どうしが記録を消し合わないよう、宛先ごとに空のファイルを作る
-const SESSION_ID = /^[A-Za-z0-9_-]+$/;
 function approvalDir(sessionId) {
 	const dataDir = process.env.CLAUDE_PLUGIN_DATA;
-	if (!dataDir || typeof sessionId !== "string" || !SESSION_ID.test(sessionId)) return null;
+	if (!dataDir || !isValidSessionId(sessionId)) return null;
 	return join(dataDir, "approved-domains", sessionId);
 }
 

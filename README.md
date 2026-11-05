@@ -12,9 +12,7 @@ Figma の URL またはデザイン画像を渡すと、Claude Code が対象プ
    /plugin install design-to-code --marketplace kinjo3/design-to-code
    ```
 
-3. サンドボックス内では Chrome が起動しないため、Claude Code の設定の `sandbox.excludedCommands` に `design-diff *` を足す。`Bash(design-diff *)` は許可ルール（`permissions.allow`）に足さない。`design-diff` はサンドボックスの外で動き、`--design` で渡された PNG をサンドボックスの制限を受けずに読むので、実行のたびに引数を確かめてから承認する。
-
-   撮影中の Chrome は、開発サーバーと、`--allow-domain` で渡したホストにだけ通信する。Web フォントなどの外部の宛先は、Claude Code がユーザーに許可を確かめたうえで `--allow-domain` に渡す。`--allow-domain` を付けた実行は、auto mode でも、プラグインの hook が「次の外部サイトと通信することを許可しますか？」と宛先を並べて承認を求める。同じセッションの間は、承認した宛先だけを使う実行では再び尋ねない。セッションを終えると承認を忘れるので、再開したセッションでは改めて尋ねる。並んだ宛先が、送ったデータを第三者が受け取れる宛先（オブジェクトストレージ、計測タグの送信先、誰でもサブドメインを持てるホスティングなど）でないかを確かめてから承認する。ページのコードは AI が書くので、許可した宛先へは、AI が読んだ内容を送れる。
+3. サンドボックス内では Chrome が起動しないため、Claude Code の設定の `sandbox.excludedCommands` に `design-diff *` を足す。`Bash(design-diff *)` は許可ルール（`permissions.allow`）に足さない。`design-diff` はサンドボックスの外で動くので、実行のたびに承認を求める（auto mode では判定役のモデルが承認し、外部サイトとの通信を許可する実行だけ人に尋ねる）。
 
 4. 差分チェックの出力先 `.design-diff/` を `.gitignore` に足す。
 
@@ -32,5 +30,5 @@ https://www.figma.com/design/<file>?node-id=1-2 を実装して
 design/hero.png を実装して
 ```
 
-合格の条件、差分チェックの出力、Claude Code が差分チェックを終えるまで終了しない仕組みは [docs/diff-check.md](docs/diff-check.md) を参照。
+合格の条件、差分チェックの出力、撮影中の通信の制限、Claude Code が差分チェックを終えるまで終了しない仕組みは [docs/diff-check.md](docs/diff-check.md) を参照。
 

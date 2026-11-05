@@ -37,8 +37,6 @@ function fail(message) {
 	process.exit(1);
 }
 
-// README の導入手順はサンドボックスの除外ルールに design-diff を入れるので、受け取った文字列をコマンドとして実行すると、
-// 任意のコマンドがサンドボックスの外で動く。黙って無視すると、ビルドしていない描画を測って調整が効かなかったと誤って判断する
 if (values.build !== undefined) {
 	fail("--build は廃止しました。ビルドが必要なプロジェクトでは、design-diff の前にビルドコマンドを単独で実行してください。");
 }
@@ -65,6 +63,8 @@ for (const [name, min] of [
 }
 
 const url = values.url;
+// ページを開いたあとのリダイレクト先と、ページが読み込むリソースの宛先は、プロキシサーバーが --url と同じホスト名の規則で絞る。
+// そのため、ここでは最初に開く --url だけを確かめる
 if (!isLocalDevServerUrl(url)) {
 	fail(`--url には、ホスト名が localhost・127.0.0.1・[::1]・*.localhost の http: か https: の URL を指定してください（渡された値: "${url}"）`);
 }
@@ -124,8 +124,6 @@ try {
 }
 
 let designPng;
-// PNG として解釈できないファイルは中身を出さずにエラーで終わり、サンドボックスの中から禁じられた場所のファイルを PNG に作り変えることもできないので、
-// --metadata・--texts と違って置き場所を限らない
 try {
 	designPng = PNG.sync.read(readFileSync(designPath));
 } catch (error) {
@@ -193,9 +191,7 @@ async function captureActual(proxy) {
 	let browser;
 	try {
 		// playwright が版を固定して配る Chromium ではなく自動更新される Chrome を使い、ブラウザの脆弱性の修正をプラグインの更新から切り離す
-		// design-diff は Claude Code のサンドボックスの外で動くので、Chrome 自身のサンドボックスまで外すと、
-		// ページが Chrome の脆弱性を 1 つ突くだけでユーザーの権限でファイルを読んだりコマンドを動かしたりできてしまう。
-		// Playwright は既定で Chrome のサンドボックスを外すため、明示して有効にする
+		// Playwright は既定で Chrome のサンドボックスを外して起動するので、chromiumSandbox を明示して有効にする
 		browser = await chromium.launch({
 			channel: "chrome",
 			chromiumSandbox: true,

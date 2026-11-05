@@ -6,8 +6,6 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { INPUTS_DIR, readResultsFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
 
-// Stop hook の登録を置くディレクトリ。計測の出力先と同じ .design-diff の下にあり、ラベルに使うと登録と計測の結果が同じディレクトリに混ざる。
-// ファイル名は重ならないので動きは壊れないが、どれが登録かを見分けにくくなるので、ラベルには使わせない
 const SESSIONS_DIR = "sessions";
 
 // #10 で設定できるようにするまでは、SKILL.md Step 5 項目 7 の「調整は最大 3 回」と同じ値を持つ
@@ -15,13 +13,11 @@ const MAX_ADJUSTMENTS = 3;
 
 export function targetLabel({ selector, width, designWidth, out }) {
 	if (out) {
-		// ラベルは .design-diff の下のディレクトリ名になるので、区切り文字や .. で .design-diff の外を指させない。
-		// design-target register でも同じ規則で弾かないと、design-diff が書き出せない名前を登録でき、Stop hook が計測記録を見つけられない
 		if (!/^[A-Za-z0-9_-]+$/.test(out)) {
 			throw new Error(`--out には英数字・-・_ だけの名前を指定してください（渡された値: "${out}"）`);
 		}
+		// ファイル名は重ならないので動作に支障はないが、計測の結果と登録や入力のファイルが同じディレクトリに混ざって見分けにくくなるので弾く
 		if (out === SESSIONS_DIR) throw new Error(`--out に "${SESSIONS_DIR}" は使えません。Stop hook の登録の置き場所と重なります`);
-		// sessions と同じく、計測の結果と入力のファイルが同じディレクトリに混ざって見分けにくくなる
 		if (out === INPUTS_DIR) throw new Error(`--out に "${INPUTS_DIR}" は使えません。--metadata・--texts のファイルの置き場所と重なります`);
 		return out;
 	}

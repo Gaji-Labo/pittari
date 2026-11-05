@@ -2,15 +2,11 @@ import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, ren
 import { randomUUID } from "node:crypto";
 import { join, relative, resolve, sep } from "node:path";
 
-// design-diff と Stop hook はサンドボックスの外で動くので、.design-diff の中のディレクトリやファイルを
-// サンドボックスの中からリンクに差し替えられると、サンドボックスが禁じている場所を読み書きしてしまう。
-// パスの確認と読み書きの間に差し替えられても防げるよう、ここを通さずに .design-diff を読み書きしない
+// サンドボックスの中の AI に .design-diff の中をリンクへ差し替えられても、リンク先を読み書きしないよう、.design-diff の読み書きはすべてこのモジュールを通す
 export class UnsafeResultsPathError extends Error {}
 
-// Node にはディレクトリを開いたまま、その中のファイルを開く手段（openat）が無い。
-// 移ったあとのカレントディレクトリは、移る前にパスが差し替えられても実際に入ったディレクトリを指し続けるので、
-// 移った先が .design-diff の中だと確かめてから、相対パスで読み書きする。
-// 絶対パスで深い階層を作ると、途中の階層がリンクならリンク先にディレクトリを作るので、1 階層ずつ確かめながら下りる
+// Node には、開いたディレクトリを基準にしてファイルを開く手段（openat）が無いので、代わりにそのディレクトリへ移り、相対パスで開く。
+// 深い階層を一度に作ると途中のリンクの先にディレクトリを作ってしまうので、1 階層ずつ作って移り、移るたびに想定したパスにいるかを確かめる
 function enterResultsDir(projectDir, segments, { create }) {
 	// 登録のファイルに書かれたラベルもここに来るので、.. で .design-diff の外へ出させない
 	const invalid = segments.find((segment) => !/^[A-Za-z0-9_-]+$/.test(segment));
@@ -18,7 +14,7 @@ function enterResultsDir(projectDir, segments, { create }) {
 	try {
 		process.chdir(projectDir);
 	} catch (error) {
-		// Stop hook に渡るセッションの cwd は、消した worktree のように既に無いことがある。Stop hook が次の候補のディレクトリを探せるよう、記録が無いものとして扱う
+		// Stop hook に渡る cwd は、消した worktree のように既に無いことがある。次の候補のディレクトリを探せるよう、記録が無いものとして扱う
 		if (!create && error.code === "ENOENT") return false;
 		throw error;
 	}
@@ -41,7 +37,6 @@ function enterResultsDir(projectDir, segments, { create }) {
 			throw error;
 		}
 		if (process.cwd() !== expected) {
-			// 大文字と小文字を区別しないファイルシステムでは、セレクタ #cv と #CV から作ったラベルが同じディレクトリを指し、計測の結果が混ざる
 			if (process.cwd().toLowerCase() === expected.toLowerCase()) {
 				throw new UnsafeResultsPathError(`${expected} と大文字・小文字だけが違う ${process.cwd()} が既にあります。--out で別の名前を指定してください`);
 			}
@@ -90,7 +85,6 @@ function replaceFile(name, data) {
 	}
 }
 
-// 呼び出し元の相対パスの解決を変えないよう、読み書きを終えたらカレントディレクトリを戻す
 function inResultsDir(projectDir, segments, options, action) {
 	const previous = process.cwd();
 	try {
@@ -114,16 +108,12 @@ export function appendResultsFile(projectDir, segments, name, data) {
 	inResultsDir(projectDir, segments, { create: true }, () => replaceFile(name, `${readRegularFile(name) ?? ""}${data}`));
 }
 
-// design-diff の --metadata・--texts で渡すファイルの置き場所
 export const INPUTS_DIR = "inputs";
 
-// design-diff はサンドボックスの外で動くので、渡されたパスをそのまま読むと、サンドボックスが読むのを禁じている場所のファイルの中身が
-// layout.json や報告に出る。サンドボックスの中から置けるファイルだけを読むよう、.design-diff/inputs の下に限る
 export function readInputFile(projectDir, path) {
 	const segments = relative(join(projectDir, ".design-diff", INPUTS_DIR), resolve(projectDir, path)).split(sep);
 	const name = segments.pop();
-	// inputs の外を指すパスは .. から始まる。inputs 自体を指すパスは名前が空になり、.design-diff 自体を指すパスは名前が .. になる。
-	// この 3 つ以外の名前は、ディレクトリを readResultsFile が 1 階層ずつ検査し、ファイルもリンクかどうかを検査して開くので、制限しない
+	// inputs の外は .. で始まり、inputs・.design-diff そのものは name が空か .. になる。リンクでないかは readResultsFile が確かめるので、ここではこれらだけを弾く
 	if (segments[0] === ".." || name === "" || name === "." || name === "..") {
 		throw new UnsafeResultsPathError(`.design-diff/${INPUTS_DIR}/ の下のファイルではないので読みません: ${path}`);
 	}

@@ -1,5 +1,7 @@
 import { after, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
 import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +12,8 @@ import {
 	UnsafeResultsPathError,
 	writeResultsFiles,
 } from "../plugin/scripts/design-results.mjs";
+
+const execFileAsync = promisify(execFile);
 
 const base = mkdtempSync(join(tmpdir(), "design-results-"));
 after(() => rmSync(base, { recursive: true, force: true }));
@@ -46,6 +50,19 @@ describe("通常の読み書き", () => {
 		appendResultsFile(project, ["a-375"], "runs.jsonl", "2\n");
 		assert.equal(readFileSync(join(project, ".design-diff", "a-375", "summary.json"), "utf8"), "{}");
 		assert.equal(readResultsFile(project, ["a-375"], "runs.jsonl"), "1\n2\n");
+	});
+
+	test("同時に追記する複数のプロセスの行を、どれも失わない", async () => {
+		const processes = 4;
+		const linesPerProcess = 50;
+		const script = `
+			import { appendResultsFile } from ${JSON.stringify(new URL("../plugin/scripts/design-results.mjs", import.meta.url).href)};
+			for (let i = 0; i < ${linesPerProcess}; i++) appendResultsFile(process.argv[1], ["a-375"], "runs.jsonl", process.argv[2] + "-" + i + "\\n");
+		`;
+		await Promise.all(
+			Array.from({ length: processes }, (_, index) => execFileAsync(process.execPath, ["--input-type=module", "-e", script, project, String(index)])),
+		);
+		assert.equal(readResultsFile(project, ["a-375"], "runs.jsonl").split("\n").filter(Boolean).length, processes * linesPerProcess);
 	});
 
 	test("無いファイルは null を返し、ディレクトリを作らない", () => {
@@ -129,6 +146,12 @@ describe("ファイルがリンクなら、リンク先を読み書きしない"
 		linkSync(secret, join(labelDir(), "runs.jsonl"));
 		assert.throws(() => appendResultsFile(project, ["a-375"], "runs.jsonl", "1\n"), UnsafeResultsPathError);
 		assertOutsideUntouched();
+	});
+
+	test("追記先・読み込み先が名前付きパイプでも、開く処理で止まらずに断る", () => {
+		execFileSync("mkfifo", [join(labelDir(), "runs.jsonl")]);
+		assert.throws(() => appendResultsFile(project, ["a-375"], "runs.jsonl", "1\n"), UnsafeResultsPathError);
+		assert.throws(() => readResultsFile(project, ["a-375"], "runs.jsonl"), UnsafeResultsPathError);
 	});
 
 	test("読み込み先がシンボリックリンク", () => {

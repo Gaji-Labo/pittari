@@ -50,22 +50,42 @@ function enterResultsDir(projectDir, segments, { create }) {
 	return true;
 }
 
-// ハードリンクは lstat でも普通のファイルに見えるので、リンクの数で見分ける
-function readRegularFile(name) {
+// 開く前ではなく開いたファイルを確かめるのは、確かめてから開くまでの間にファイルを差し替えられても、確かめたファイルと読み書きするファイルが食い違わないようにするため。
+// ハードリンクは lstat でも普通のファイルに見えるので、リンクの数で見分ける。
+// O_NONBLOCK は、名前付きパイプに差し替えられたときに、開く処理で止まらず、普通のファイルでないと判定まで進むために付ける
+function openRegularFile(name, flags) {
 	let fd;
 	try {
-		fd = openSync(name, constants.O_RDONLY | constants.O_NOFOLLOW);
+		fd = openSync(name, flags | constants.O_NOFOLLOW | constants.O_NONBLOCK);
 	} catch (error) {
 		if (error.code === "ENOENT") return null;
 		if (error.code === "ELOOP") throw new UnsafeResultsPathError(`${join(process.cwd(), name)} がシンボリックリンクです`);
+		if (error.code === "ENXIO") throw new UnsafeResultsPathError(`${join(process.cwd(), name)} が普通のファイルではありません`);
 		throw error;
 	}
+	const stats = fstatSync(fd);
+	if (!stats.isFile() || stats.nlink !== 1) {
+		closeSync(fd);
+		throw new UnsafeResultsPathError(`${join(process.cwd(), name)} が普通のファイルではないか、ハードリンクです`);
+	}
+	return fd;
+}
+
+function readRegularFile(name) {
+	const fd = openRegularFile(name, constants.O_RDONLY);
+	if (fd === null) return null;
 	try {
-		const stats = fstatSync(fd);
-		if (!stats.isFile() || stats.nlink !== 1) {
-			throw new UnsafeResultsPathError(`${join(process.cwd(), name)} が普通のファイルではないか、ハードリンクです`);
-		}
 		return readFileSync(fd, "utf8");
+	} finally {
+		closeSync(fd);
+	}
+}
+
+// 置き換えで追記すると、同時に終えた 2 つの実行が同じ古い中身に足して書き戻し、先に書いた方の行が消えるので、O_APPEND で書き足す
+function appendRegularFile(name, data) {
+	const fd = openRegularFile(name, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT);
+	try {
+		writeFileSync(fd, data);
 	} finally {
 		closeSync(fd);
 	}
@@ -109,7 +129,7 @@ export function writeResultsFiles(projectDir, segments, files) {
 }
 
 export function appendResultsFile(projectDir, segments, name, data) {
-	inResultsDir(projectDir, segments, { create: true }, () => replaceFile(name, `${readRegularFile(name) ?? ""}${data}`));
+	inResultsDir(projectDir, segments, { create: true }, () => appendRegularFile(name, data));
 }
 
 export const INPUTS_DIR = "inputs";

@@ -6,10 +6,10 @@ import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 import { collectElementBoxes, compareEdges, formatEdgeReport } from "./design-edges.mjs";
 import { collectDomBoxes, compareLayout, formatLayoutReport, parseMetadata } from "./design-layout.mjs";
-import { isAllowedHost, isValidAllowDomain, PROXY_BYPASS, startBlockingProxy } from "./design-network.mjs";
+import { createDestinationPolicy, isValidAllowDomain, isValidAllowOrigin, portOf, startBlockingProxy } from "./design-network.mjs";
 import { appendResultsFile, readInputFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
 import { RUN_LOG_FILE, targetLabel, workingTreeHash } from "./design-target.mjs";
-import { isLocalDevServerUrl } from "./design-url.mjs";
+import { isLocalDevServerUrl, isLocalHostname } from "./design-url.mjs";
 
 const { values } = parseArgs({
 	options: {
@@ -29,6 +29,7 @@ const { values } = parseArgs({
 		"layout-tolerance": { type: "string", default: "1" },
 		build: { type: "string" },
 		"allow-domain": { type: "string", multiple: true },
+		"allow-origin": { type: "string", multiple: true },
 	},
 });
 
@@ -63,7 +64,7 @@ for (const [name, min] of [
 }
 
 const url = values.url;
-// ページを開いたあとのリダイレクト先と、ページが読み込むリソースの宛先は、プロキシサーバーが --url と同じホスト名の規則で絞る。
+// ページを開いたあとのリダイレクト先と、ページが読み込むリソースの宛先は、プロキシサーバーが --url のオリジンと --allow-domain・--allow-origin で絞る。
 // そのため、ここでは最初に開く --url だけを確かめる
 if (!isLocalDevServerUrl(url)) {
 	fail(`--url には、ホスト名が localhost・127.0.0.1・[::1]・*.localhost の http: か https: の URL を指定してください（渡された値: "${url}"）`);
@@ -73,6 +74,14 @@ const invalidDomain = allowDomains.find((domain) => !isValidAllowDomain(domain))
 if (invalidDomain !== undefined) {
 	fail(`--allow-domain には、スキーム・ポート・ワイルドカードを付けないホスト名を指定してください（渡された値: "${invalidDomain}"）`);
 }
+const allowOrigins = values["allow-origin"] ?? [];
+const invalidOrigin = allowOrigins.find((origin) => !isValidAllowOrigin(origin));
+if (invalidOrigin !== undefined) {
+	fail(
+		`--allow-origin には、ホスト名が localhost・127.0.0.1・[::1]・*.localhost の、パスと末尾の / を付けないオリジン（例: http://localhost:8080）を指定してください（渡された値: "${invalidOrigin}"）`,
+	);
+}
+const destinationPolicy = createDestinationPolicy(url, allowDomains, allowOrigins);
 const selector = values.selector;
 const designPath = values.design;
 const width = Number(values.width);
@@ -184,7 +193,7 @@ function isBlockedUrl(value) {
 	} catch {
 		return false;
 	}
-	return ["http:", "https:"].includes(parsed.protocol) && !isAllowedHost(parsed.hostname, allowDomains);
+	return ["http:", "https:"].includes(parsed.protocol) && !destinationPolicy.isAllowed(parsed.hostname, portOf(parsed));
 }
 
 async function captureActual(proxy) {
@@ -195,7 +204,7 @@ async function captureActual(proxy) {
 		browser = await chromium.launch({
 			channel: "chrome",
 			chromiumSandbox: true,
-			proxy: { server: proxy.server, bypass: PROXY_BYPASS },
+			proxy: { server: proxy.server, bypass: destinationPolicy.proxyBypass },
 			// WebRTC の UDP の通信はプロキシサーバーを通らないので、Chrome の起動引数で止める
 			args: ["--webrtc-ip-handling-policy=disable_non_proxied_udp"],
 		});
@@ -212,7 +221,7 @@ async function captureActual(proxy) {
 		});
 		const page = await context.newPage();
 		const throwIfLeftDevServer = () => {
-			if (isLocalDevServerUrl(page.url())) return;
+			if (new URL(page.url()).origin === destinationPolicy.devOrigin) return;
 			throw new CaptureError(
 				`ページが開発サーバーの外へ移ったので、撮影せずに終えました（移った先: ${page.url()}。遮断した外部のホストへ移ったときは Chrome のエラー画面の URL になる）\n開発サーバーのリダイレクトや、location を書き換えるスクリプトを確かめてください。`,
 			);
@@ -290,7 +299,7 @@ let targetRect;
 let domBoxes;
 let elementBoxes;
 let excludeBoxes;
-const proxy = await startBlockingProxy(allowDomains);
+const proxy = await startBlockingProxy(destinationPolicy);
 try {
 	({ buffer: actualBuffer, rect: targetRect, domBoxes, elementBoxes, excludeBoxes } = await captureActual(proxy));
 } catch (error) {
@@ -300,12 +309,17 @@ try {
 	await proxy.close();
 }
 
+// ローカルの宛先はホスト名だけでは開発サーバーと見分けられず、許可にも --allow-origin のオリジンが要るので、外部のホストと分けてオリジンで出す
 const blockedHosts = new Map();
+const blockedLocalOrigins = new Map();
 for (const { url: blockedUrl, resourceType } of blockedRequests) {
-	const host = new URL(blockedUrl).hostname;
-	const types = blockedHosts.get(host) ?? {};
+	const parsed = new URL(blockedUrl);
+	const [groups, key] = isLocalHostname(parsed.hostname)
+		? [blockedLocalOrigins, parsed.origin]
+		: [blockedHosts, parsed.hostname];
+	const types = groups.get(key) ?? {};
 	types[resourceType] = (types[resourceType] ?? 0) + 1;
-	blockedHosts.set(host, types);
+	groups.set(key, types);
 }
 
 const screenshotPng = PNG.sync.read(actualBuffer);
@@ -544,7 +558,7 @@ const summary = {
 	targetRectCssPx: targetRect,
 	deviceScaleFactor,
 	diffRatioThreshold,
-	args: { url, selector, designPath, width, designWidth, height, wait, exclude: excludeSelectors, allowDomains },
+	args: { url, selector, designPath, width, designWidth, height, wait, exclude: excludeSelectors, allowDomains, allowOrigins },
 	timestamp: new Date().toISOString(),
 };
 const outputFiles = {
@@ -596,12 +610,15 @@ if (excludedPixels > 0) {
 	const excludedCount = excludedReports.reduce((sum, report) => sum + report.rectsCssPx.length, 0);
 	console.log(`比較から外した範囲: ${excludedCount} 件（${excludedPixels} 画素、diffRatio の分母から除く。diff.png では青で塗る）`);
 }
-if (blockedHosts.size > 0) {
-	console.log("読み込めなかった外部のホスト（--allow-domain で許可していないので遮断した。リソースの種類と件数）:");
-	for (const [host, resourceTypes] of blockedHosts) {
-		console.log(`  ${host}: ${Object.entries(resourceTypes).map(([type, count]) => `${type} ${count} 件`).join(", ")}`);
+function printBlocked(heading, groups) {
+	if (groups.size === 0) return;
+	console.log(heading);
+	for (const [destination, resourceTypes] of groups) {
+		console.log(`  ${destination}: ${Object.entries(resourceTypes).map(([type, count]) => `${type} ${count} 件`).join(", ")}`);
 	}
 }
+printBlocked("読み込めなかった外部のホスト（--allow-domain で許可していないので遮断した。リソースの種類と件数）:", blockedHosts);
+printBlocked("読み込めなかったローカルの宛先（--url と別のオリジンで、--allow-origin で許可していないので遮断した。リソースの種類と件数）:", blockedLocalOrigins);
 if (!pixelPass) {
 	if (clusterReports.length > 0) {
 		console.log("差分クラスタ（CSS px 概算、差分量の大きい順）:");

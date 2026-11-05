@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, request } from "node:http";
-import { isAllowedHost, isValidAllowDomain, startBlockingProxy } from "../plugin/scripts/design-network.mjs";
+import { createDestinationPolicy, isValidAllowDomain, startBlockingProxy } from "../plugin/scripts/design-network.mjs";
 
 describe("--allow-domain", () => {
 	for (const domain of ["fonts.googleapis.com", "use.typekit.net", "a-b.example.co.jp"]) {
@@ -17,31 +17,65 @@ describe("--allow-domain", () => {
 });
 
 describe("通信してよい宛先", () => {
-	test("--url と同じ規則のホストは、--allow-domain が無くても通す", () => {
-		for (const host of ["localhost", "127.0.0.1", "[::1]", "app.localhost"]) assert.equal(isAllowedHost(host, []), true);
+	test("ローカルの宛先は、--url と同じホスト名とポートだけを通す", () => {
+		const policy = createDestinationPolicy("http://localhost:5173/page", []);
+		assert.equal(policy.isAllowed("localhost", "5173"), true);
+		assert.equal(policy.isAllowed("LOCALHOST", 5173), true);
+		for (const [host, port] of [
+			["localhost", "8080"],
+			["127.0.0.1", "5173"],
+			["[::1]", "5173"],
+			["app.localhost", "5173"],
+		]) {
+			assert.equal(policy.isAllowed(host, port), false, `${host}:${port}`);
+		}
+	});
+	test("ポートを書かない --url は、スキームの既定のポートと比べる", () => {
+		assert.equal(createDestinationPolicy("http://app.localhost/", []).isAllowed("app.localhost", "80"), true);
+		assert.equal(createDestinationPolicy("https://[::1]/", []).isAllowed("[::1]", "443"), true);
+		assert.equal(createDestinationPolicy("https://[::1]/", []).isAllowed("[::1]", "80"), false);
 	});
 	test("--allow-domain に渡したホストだけを通し、サブドメインは通さない", () => {
-		assert.equal(isAllowedHost("fonts.gstatic.com", ["fonts.gstatic.com"]), true);
-		assert.equal(isAllowedHost("evil.fonts.gstatic.com", ["fonts.gstatic.com"]), false);
-		assert.equal(isAllowedHost("example.com", ["fonts.gstatic.com"]), false);
+		const policy = createDestinationPolicy("http://localhost:5173/", ["fonts.gstatic.com"]);
+		assert.equal(policy.isAllowed("fonts.gstatic.com", "443"), true);
+		assert.equal(policy.isAllowed("evil.fonts.gstatic.com", "443"), false);
+		assert.equal(policy.isAllowed("example.com", "443"), false);
+	});
+	test("--allow-domain にローカルのホスト名を渡しても、--url と別のオリジンは通さない", () => {
+		assert.equal(createDestinationPolicy("http://localhost:5173/", ["app.localhost"]).isAllowed("app.localhost", "5173"), false);
+	});
+	test("Chrome には開発サーバーだけを直接つながせ、ほかのループバックの宛先はプロキシサーバーに通させる", () => {
+		assert.equal(createDestinationPolicy("http://localhost:5173/", []).proxyBypass, "localhost:5173,<-loopback>");
+		assert.equal(createDestinationPolicy("http://[::1]/", []).proxyBypass, "[::1]:80,<-loopback>");
 	});
 });
 
 describe("プロキシサーバー", () => {
 	let devServer;
 	let devPort;
+	let otherServer;
+	let otherPort;
+	let otherHits = 0;
 	let proxy;
 	let proxyPort;
 	before(async () => {
 		devServer = createServer((req, res) => res.end("dev"));
 		await new Promise((resolve) => devServer.listen(0, "127.0.0.1", resolve));
 		devPort = devServer.address().port;
-		proxy = await startBlockingProxy([]);
+		otherServer = createServer((req, res) => {
+			otherHits++;
+			res.end("other");
+		});
+		otherServer.on("connection", () => otherHits++);
+		await new Promise((resolve) => otherServer.listen(0, "127.0.0.1", resolve));
+		otherPort = otherServer.address().port;
+		proxy = await startBlockingProxy(createDestinationPolicy(`http://localhost:${devPort}/`, []));
 		proxyPort = Number(new URL(proxy.server).port);
 	});
 	after(async () => {
 		await proxy.close();
 		await new Promise((resolve) => devServer.close(resolve));
+		await new Promise((resolve) => otherServer.close(resolve));
 	});
 
 	function connectThroughProxy(target) {
@@ -80,6 +114,30 @@ describe("プロキシサーバー", () => {
 	test("開発サーバーへの要求は中継する", async () => {
 		assert.equal(await connectThroughProxy(`localhost:${devPort}`), 200);
 		assert.equal(await getThroughProxy(`http://localhost:${devPort}/`), "dev");
+	});
+	test("開発サーバーと別のポートのローカルのサーバーには、要求も接続も届かない", async () => {
+		otherHits = 0;
+		assert.equal(await connectThroughProxy(`localhost:${otherPort}`), "切断");
+		assert.equal(await connectThroughProxy(`127.0.0.1:${otherPort}`), "切断");
+		assert.equal(await getThroughProxy(`http://localhost:${otherPort}/.env`), "切断");
+		assert.equal(otherHits, 0);
+
+		// 同じサーバーを --url にしたプロキシサーバーでは着信を数えられることを確かめ、上の 0 件が数え漏れでないことを示す
+		const control = await startBlockingProxy(createDestinationPolicy(`http://localhost:${otherPort}/`, []));
+		try {
+			const status = await new Promise((resolve) => {
+				const req = request({ host: "127.0.0.1", port: Number(new URL(control.server).port), path: `http://localhost:${otherPort}/` }, (res) => {
+					res.resume();
+					res.on("end", () => resolve(res.statusCode));
+				});
+				req.on("error", () => resolve("切断"));
+				req.end();
+			});
+			assert.equal(status, 200);
+		} finally {
+			await control.close();
+		}
+		assert.ok(otherHits > 0);
 	});
 });
 

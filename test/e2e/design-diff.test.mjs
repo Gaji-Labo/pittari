@@ -36,6 +36,11 @@ const webrtcPage = (stunPort) => `${PAGE}
 	pc.createOffer().then((offer) => pc.setLocalDescription(offer));
 </script>`;
 const STUN_MAGIC_COOKIE = 0x2112a442;
+// 画像・fetch・iframe はそれぞれ別の経路で読み込まれるので、どれか 1 つでも開発サーバーと別のポートに届けば数えられるよう、3 つとも置く
+const otherPortPage = (otherOrigin) => `${PAGE}
+<img src="${otherOrigin}/image.png">
+<iframe src="${otherOrigin}/.env"></iframe>
+<script>fetch("${otherOrigin}/api", { mode: "no-cors" }).catch(() => {});</script>`;
 const METADATA = '<frame id="1:1" name="t" x="0" y="0" width="100" height="50"><text id="1:2" name="x" x="0" y="0" width="40" height="20" /></frame>';
 
 function designPng() {
@@ -56,6 +61,9 @@ let server;
 let url;
 let udpReceiver;
 let datagrams = 0;
+let otherServer;
+let otherOrigin;
+let otherHits = 0;
 before(async () => {
 	base = mkdtempSync(join(tmpdir(), "design-diff-e2e-"));
 	project = join(base, "project");
@@ -74,15 +82,23 @@ before(async () => {
 	});
 	await new Promise((resolve) => udpReceiver.bind(0, "0.0.0.0", resolve));
 	const stunPort = udpReceiver.address().port;
+	otherServer = createServer((request, response) => {
+		otherHits++;
+		response.end("SECRET=1\n");
+	});
+	await new Promise((resolve) => otherServer.listen(0, "127.0.0.1", resolve));
+	otherOrigin = `http://127.0.0.1:${otherServer.address().port}`;
 	server = createServer((request, response) => {
 		response.setHeader("content-type", "text/html");
-		response.end(request.url === "/webrtc" ? webrtcPage(stunPort) : PAGE);
+		const pages = { "/webrtc": webrtcPage(stunPort), "/other-port": otherPortPage(otherOrigin) };
+		response.end(pages[request.url] ?? PAGE);
 	});
 	await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 	url = `http://127.0.0.1:${server.address().port}/`;
 });
 after(() => {
 	server?.close();
+	otherServer?.close();
 	udpReceiver?.close();
 	rmSync(base, { recursive: true, force: true });
 });
@@ -162,5 +178,27 @@ describe("design-diff", { timeout: 60_000 }, () => {
 		const { code, stdout, stderr } = await designDiff(["--design", design], webrtcUrl);
 		assert.equal(code, 0, `${stdout}\n${stderr}`);
 		assert.equal(datagrams, 0);
+	});
+
+	test("開発サーバーと別のポートのローカルのサーバーには、ページの読み込みが届かない", async () => {
+		const otherPortUrl = new URL("/other-port", url).href;
+
+		// プロキシサーバーを通さない Chrome で着信を数え、このページが別のポートへ読み込みを送ることと、受け手が着信を数えられることを先に確かめる
+		otherHits = 0;
+		const browser = await chromium.launch({ channel: "chrome", chromiumSandbox: true });
+		try {
+			const page = await browser.newPage();
+			await page.goto(otherPortUrl, { waitUntil: "networkidle" });
+		} finally {
+			await browser.close();
+		}
+		assert.ok(otherHits > 0, "プロキシサーバーを通さない Chrome からも着信が無く、この確かめ方では遮断できたかを判断できない");
+
+		otherHits = 0;
+		const { code, stdout, stderr } = await designDiff(["--design", design], otherPortUrl);
+		assert.equal(code, 0, `${stdout}\n${stderr}`);
+		assert.equal(otherHits, 0);
+		assert.match(stdout, /読み込めなかったローカルの宛先/);
+		assert.ok(stdout.includes(`  ${new URL(otherOrigin).host}: `), stdout);
 	});
 });

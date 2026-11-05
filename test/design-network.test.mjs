@@ -147,7 +147,7 @@ describe("プロキシサーバー", () => {
 		assert.equal(await getThroughProxy(`http://localhost:${otherPort}/.env`), "切断");
 		assert.equal(otherHits, 0);
 
-		// 同じサーバーを --url にしたプロキシサーバーでは着信を数えられることを確かめ、上の 0 件が数え漏れでないことを示す
+		// 同じ受け手への通信を許可したプロキシサーバーを通すと、受け手が数えた要求の数が増えることを確かめる。上で 0 のままだったのが、数え方の誤りのせいではないことを示すため
 		const control = await startBlockingProxy(createDestinationPolicy(`http://localhost:${otherPort}/`, []));
 		try {
 			const status = await new Promise((resolve) => {

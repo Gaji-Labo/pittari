@@ -162,7 +162,7 @@ describe("design-diff", { timeout: 60_000 }, () => {
 		assert.ok(externalAddress, "外向きの IPv4 アドレスが無く、UDP の受け手の宛先を用意できない");
 		const webrtcUrl = new URL("/webrtc", url).href;
 
-		// 起動引数を付けない Chrome で着信を数え、このページが UDP を送ることと、受け手が着信を数えられることを先に確かめる
+		// 起動引数を付けない Chrome で同じページを開き、このページが UDP を送ることと、受け手が届いた UDP を数えられることを先に確かめる
 		datagrams = 0;
 		const browser = await chromium.launch({ channel: "chrome", chromiumSandbox: true });
 		try {
@@ -172,7 +172,7 @@ describe("design-diff", { timeout: 60_000 }, () => {
 		} finally {
 			await browser.close();
 		}
-		assert.ok(datagrams > 0, "起動引数を付けない Chrome からも着信が無く、この確かめ方では UDP が止まったかを判断できない");
+		assert.ok(datagrams > 0, "起動引数を付けない Chrome からも受け手に UDP が届かず、この確かめ方では UDP が止まったかを判断できない");
 
 		datagrams = 0;
 		const { code, stdout, stderr } = await designDiff(["--design", design], webrtcUrl);
@@ -183,7 +183,7 @@ describe("design-diff", { timeout: 60_000 }, () => {
 	test("開発サーバーと別のポートのローカルのサーバーには、--allow-origin で許可しない限り、ページの読み込みが届かない", async () => {
 		const otherPortUrl = new URL("/other-port", url).href;
 
-		// プロキシサーバーを通さない Chrome で着信を数え、このページが別のポートへ読み込みを送ることと、受け手が着信を数えられることを先に確かめる
+		// プロキシサーバーを通さない Chrome で同じページを開き、このページが別のポートへ読み込みを送ることと、受け手が届いた要求を数えられることを先に確かめる
 		otherHits = 0;
 		const browser = await chromium.launch({ channel: "chrome", chromiumSandbox: true });
 		try {
@@ -192,7 +192,7 @@ describe("design-diff", { timeout: 60_000 }, () => {
 		} finally {
 			await browser.close();
 		}
-		assert.ok(otherHits > 0, "プロキシサーバーを通さない Chrome からも着信が無く、この確かめ方では遮断できたかを判断できない");
+		assert.ok(otherHits > 0, "プロキシサーバーを通さない Chrome からも受け手に要求が届かず、この確かめ方では遮断できたかを判断できない");
 
 		otherHits = 0;
 		const { code, stdout, stderr } = await designDiff(["--design", design], otherPortUrl);

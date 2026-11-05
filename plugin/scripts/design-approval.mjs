@@ -1,6 +1,6 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { isValidAllowDomain } from "./design-network.mjs";
+import { isValidAllowDomain, isValidAllowOrigin } from "./design-network.mjs";
 import { isValidSessionId } from "./design-session.mjs";
 
 // シェルの規則を再現して design-diff を実行するかを見分ける方法では、timeout などを前に付けた形のように、サンドボックスの除外ルールに一致する形を
@@ -14,13 +14,13 @@ function mentionsDesignDiff(command) {
 	return words.some((word) => word === "design-diff" || word.endsWith("/design-diff"));
 }
 
-function allowDomainsIn(args) {
-	const domains = [];
+function optionValuesIn(args, option) {
+	const values = [];
 	args.forEach((arg, index) => {
-		if (arg === "--allow-domain" && index + 1 < args.length) domains.push(args[index + 1]);
-		else if (arg.startsWith("--allow-domain=")) domains.push(arg.slice("--allow-domain=".length));
+		if (arg === option && index + 1 < args.length) values.push(args[index + 1]);
+		else if (arg.startsWith(`${option}=`)) values.push(arg.slice(option.length + 1));
 	});
-	return domains;
+	return values;
 }
 
 const DENY_REASON = [
@@ -34,7 +34,10 @@ function parseDesignDiff(command) {
 	const match = RUNNABLE_DESIGN_DIFF.exec(command);
 	if (match === null) return { denyReason: DENY_REASON };
 	const args = (match[1].match(new RegExp(WORD, "g")) ?? []).map((arg) => arg.replace(/'([^']*)'|"([^"]*)"/g, (_, single, double) => single ?? double));
-	return { domains: allowDomainsIn(args).map((domain) => domain.toLowerCase()) };
+	return {
+		domains: optionValuesIn(args, "--allow-domain").map((domain) => domain.toLowerCase()),
+		origins: optionValuesIn(args, "--allow-origin"),
+	};
 }
 
 // 承認の記録は、サンドボックスの中から書けないプラグインのデータ用ディレクトリに置き、AI が承認を偽れないようにする。
@@ -55,11 +58,15 @@ function readApproved(sessionId) {
 	}
 }
 
-function rememberApproved(sessionId, domains) {
+// オリジンは / を含むのでそのままではファイル名にできない。符号化した名前は % を含み、ホスト名の記録と重ならない
+const originRecordName = (origin) => encodeURIComponent(origin);
+
+function rememberApproved(sessionId, { domains, origins }) {
 	const dir = approvalDir(sessionId);
 	if (dir === null) return;
 	mkdirSync(dir, { recursive: true });
-	for (const domain of domains.filter(isValidAllowDomain)) writeFileSync(join(dir, domain), "");
+	const names = [...domains.filter(isValidAllowDomain), ...origins.filter(isValidAllowOrigin).map(originRecordName)];
+	for (const name of names) writeFileSync(join(dir, name), "");
 }
 
 function decide(permissionDecision, permissionDecisionReason) {
@@ -82,7 +89,7 @@ if (input?.hook_event_name === "SessionEnd") {
 // PostToolUseFailure でも記録するのは、差分が閾値を超えて終了コード 1 で終えた実行も、人が承認して実行まで進んでいるため
 if (input?.hook_event_name === "PostToolUse" || input?.hook_event_name === "PostToolUseFailure") {
 	const parsed = command === null ? null : parseDesignDiff(command);
-	if (parsed?.domains?.length > 0) rememberApproved(input.session_id, parsed.domains);
+	if (parsed?.domains?.length > 0 || parsed?.origins?.length > 0) rememberApproved(input.session_id, parsed);
 	process.exit(0);
 }
 
@@ -94,17 +101,34 @@ if (parsed === null) process.exit(0);
 if (parsed.denyReason) decide("deny", parsed.denyReason);
 
 const approved = readApproved(input.session_id);
-const domains = parsed.domains;
-if (domains.every((domain) => approved.includes(domain))) process.exit(0);
+const { domains, origins } = parsed;
+if (domains.every((domain) => approved.includes(domain)) && origins.every((origin) => approved.includes(originRecordName(origin)))) {
+	process.exit(0);
+}
 
+const sections = [];
+if (domains.length > 0) {
+	sections.push(
+		"次の外部サイト:",
+		...domains.map((domain) => `  ・${domain}`),
+		"許可すると、開発中のページのプログラムがこれらのサイトへデータを送れるようになります。フォントや画像の配信元として知っているサイトだけを許可してください。",
+		"",
+	);
+}
+if (origins.length > 0) {
+	sections.push(
+		"このマシンで動いている次のサーバー:",
+		...origins.map((origin) => `  ・${origin}`),
+		"許可すると、開発中のページのプログラムがこれらのサーバーへ要求を送り、返ってきた内容を撮影結果に写せるようになります。このプロジェクトの API サーバーなど、何が動いているか知っているものだけを許可してください。",
+		"",
+	);
+}
 decide(
 	"ask",
 	[
-		"デザインとの比較のため、開発中のページが次の外部サイトと通信することを許可しますか？",
+		"デザインとの比較のため、開発中のページが次の宛先と通信することを許可しますか？",
 		"",
-		...domains.map((domain) => `  ・${domain}`),
-		"",
-		"許可すると、開発中のページのプログラムがこれらのサイトへデータを送れるようになります。フォントや画像の配信元として知っているサイトだけを許可してください。",
-		"このセッションの間は、許可したサイトだけを使う実行では再び尋ねません。",
+		...sections,
+		"このセッションの間は、許可した宛先だけを使う実行では再び尋ねません。",
 	].join("\n"),
 );

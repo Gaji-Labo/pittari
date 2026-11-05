@@ -6,7 +6,7 @@ import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 import { collectElementBoxes, compareEdges, formatEdgeReport } from "./design-edges.mjs";
 import { collectDomBoxes, compareLayout, formatLayoutReport, parseMetadata } from "./design-layout.mjs";
-import { createDestinationPolicy, isValidAllowDomain, portOf, startBlockingProxy } from "./design-network.mjs";
+import { createDestinationPolicy, isValidAllowDomain, isValidAllowOrigin, portOf, startBlockingProxy } from "./design-network.mjs";
 import { appendResultsFile, readInputFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
 import { RUN_LOG_FILE, targetLabel, workingTreeHash } from "./design-target.mjs";
 import { isLocalDevServerUrl, isLocalHostname } from "./design-url.mjs";
@@ -29,6 +29,7 @@ const { values } = parseArgs({
 		"layout-tolerance": { type: "string", default: "1" },
 		build: { type: "string" },
 		"allow-domain": { type: "string", multiple: true },
+		"allow-origin": { type: "string", multiple: true },
 	},
 });
 
@@ -63,7 +64,7 @@ for (const [name, min] of [
 }
 
 const url = values.url;
-// ページを開いたあとのリダイレクト先と、ページが読み込むリソースの宛先は、プロキシサーバーが --url のオリジンと --allow-domain で絞る。
+// ページを開いたあとのリダイレクト先と、ページが読み込むリソースの宛先は、プロキシサーバーが --url のオリジンと --allow-domain・--allow-origin で絞る。
 // そのため、ここでは最初に開く --url だけを確かめる
 if (!isLocalDevServerUrl(url)) {
 	fail(`--url には、ホスト名が localhost・127.0.0.1・[::1]・*.localhost の http: か https: の URL を指定してください（渡された値: "${url}"）`);
@@ -73,7 +74,14 @@ const invalidDomain = allowDomains.find((domain) => !isValidAllowDomain(domain))
 if (invalidDomain !== undefined) {
 	fail(`--allow-domain には、スキーム・ポート・ワイルドカードを付けないホスト名を指定してください（渡された値: "${invalidDomain}"）`);
 }
-const destinationPolicy = createDestinationPolicy(url, allowDomains);
+const allowOrigins = values["allow-origin"] ?? [];
+const invalidOrigin = allowOrigins.find((origin) => !isValidAllowOrigin(origin));
+if (invalidOrigin !== undefined) {
+	fail(
+		`--allow-origin には、ホスト名が localhost・127.0.0.1・[::1]・*.localhost の、パスと末尾の / を付けないオリジン（例: http://localhost:8080）を指定してください（渡された値: "${invalidOrigin}"）`,
+	);
+}
+const destinationPolicy = createDestinationPolicy(url, allowDomains, allowOrigins);
 const selector = values.selector;
 const designPath = values.design;
 const width = Number(values.width);
@@ -301,13 +309,13 @@ try {
 	await proxy.close();
 }
 
-// 遮断したローカルの宛先は --allow-domain で許可できず、ホスト名だけでは開発サーバーと見分けられないので、外部のホストと分けてポートまで出す
+// ローカルの宛先はホスト名だけでは開発サーバーと見分けられず、許可にも --allow-origin のオリジンが要るので、外部のホストと分けてオリジンで出す
 const blockedHosts = new Map();
 const blockedLocalOrigins = new Map();
 for (const { url: blockedUrl, resourceType } of blockedRequests) {
 	const parsed = new URL(blockedUrl);
 	const [groups, key] = isLocalHostname(parsed.hostname)
-		? [blockedLocalOrigins, `${parsed.hostname}:${portOf(parsed)}`]
+		? [blockedLocalOrigins, parsed.origin]
 		: [blockedHosts, parsed.hostname];
 	const types = groups.get(key) ?? {};
 	types[resourceType] = (types[resourceType] ?? 0) + 1;
@@ -550,7 +558,7 @@ const summary = {
 	targetRectCssPx: targetRect,
 	deviceScaleFactor,
 	diffRatioThreshold,
-	args: { url, selector, designPath, width, designWidth, height, wait, exclude: excludeSelectors, allowDomains },
+	args: { url, selector, designPath, width, designWidth, height, wait, exclude: excludeSelectors, allowDomains, allowOrigins },
 	timestamp: new Date().toISOString(),
 };
 const outputFiles = {
@@ -610,7 +618,7 @@ function printBlocked(heading, groups) {
 	}
 }
 printBlocked("読み込めなかった外部のホスト（--allow-domain で許可していないので遮断した。リソースの種類と件数）:", blockedHosts);
-printBlocked("読み込めなかったローカルの宛先（--url と別のオリジンなので遮断した。--allow-domain では許可できない。リソースの種類と件数）:", blockedLocalOrigins);
+printBlocked("読み込めなかったローカルの宛先（--url と別のオリジンで、--allow-origin で許可していないので遮断した。リソースの種類と件数）:", blockedLocalOrigins);
 if (!pixelPass) {
 	if (clusterReports.length > 0) {
 		console.log("差分クラスタ（CSS px 概算、差分量の大きい順）:");

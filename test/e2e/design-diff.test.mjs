@@ -180,7 +180,7 @@ describe("design-diff", { timeout: 60_000 }, () => {
 		assert.equal(datagrams, 0);
 	});
 
-	test("開発サーバーと別のポートのローカルのサーバーには、ページの読み込みが届かない", async () => {
+	test("開発サーバーと別のポートのローカルのサーバーには、--allow-origin で許可しない限り、ページの読み込みが届かない", async () => {
 		const otherPortUrl = new URL("/other-port", url).href;
 
 		// プロキシサーバーを通さない Chrome で着信を数え、このページが別のポートへ読み込みを送ることと、受け手が着信を数えられることを先に確かめる
@@ -199,6 +199,12 @@ describe("design-diff", { timeout: 60_000 }, () => {
 		assert.equal(code, 0, `${stdout}\n${stderr}`);
 		assert.equal(otherHits, 0);
 		assert.match(stdout, /読み込めなかったローカルの宛先/);
-		assert.ok(stdout.includes(`  ${new URL(otherOrigin).host}: `), stdout);
+		assert.ok(stdout.includes(`  ${otherOrigin}: `), stdout);
+
+		otherHits = 0;
+		const allowed = await designDiff(["--design", design, "--allow-origin", otherOrigin], otherPortUrl);
+		assert.equal(allowed.code, 0, `${allowed.stdout}\n${allowed.stderr}`);
+		assert.ok(otherHits > 0, "--allow-origin で許可したオリジンに読み込みが届かない");
+		assert.doesNotMatch(allowed.stdout, /読み込めなかったローカルの宛先/);
 	});
 });

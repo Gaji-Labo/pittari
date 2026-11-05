@@ -1,3 +1,5 @@
+import { formatDelta } from "./design-report.mjs";
+
 // Figma の get_metadata が返すノードの箱と、実装の DOM の箱を要素ごとに突き合わせる。
 // design-diff.mjs から使う。画素差分は面積の小さいずれを薄めてしまうので、配置はこちらで判定する
 
@@ -150,8 +152,6 @@ export function compareLayout(nodes, boxes, texts, tolerance) {
 		return { node, status, method: match.method, element: box?.label ?? null, rival: match.rival?.label ?? null, reason: match.reason ?? null, delta };
 	});
 }
-
-const formatDelta = (value) => (Math.abs(value) < 0.05 ? "0" : `${value > 0 ? "+" : ""}${value.toFixed(1)}`);
 
 export function formatLayoutReport(results, tolerance) {
 	const lines = [];

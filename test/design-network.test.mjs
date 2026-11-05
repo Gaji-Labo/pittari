@@ -33,7 +33,15 @@ describe("プロキシサーバー", () => {
 	let proxy;
 	let proxyPort;
 	before(async () => {
-		devServer = createServer((req, res) => res.end("dev"));
+		devServer = createServer((req, res) => {
+			if (req.url === "/reset") {
+				res.writeHead(200, { "content-length": "100" });
+				res.write("partial");
+				setTimeout(() => res.socket.destroy(), 20);
+				return;
+			}
+			res.end("dev");
+		});
 		await new Promise((resolve) => devServer.listen(0, "127.0.0.1", resolve));
 		devPort = devServer.address().port;
 		proxy = await startBlockingProxy([]);
@@ -62,6 +70,7 @@ describe("プロキシサーバー", () => {
 				let body = "";
 				res.on("data", (chunk) => (body += chunk));
 				res.on("end", () => resolve(body));
+				res.on("error", () => resolve("切断"));
 			});
 			req.on("error", () => resolve("切断"));
 			req.end();
@@ -79,6 +88,10 @@ describe("プロキシサーバー", () => {
 	});
 	test("開発サーバーへの要求は中継する", async () => {
 		assert.equal(await connectThroughProxy(`localhost:${devPort}`), 200);
+		assert.equal(await getThroughProxy(`http://localhost:${devPort}/`), "dev");
+	});
+	test("中継先が応答の途中で接続を切っても、プロキシサーバーは動き続ける", async () => {
+		assert.equal(await getThroughProxy(`http://localhost:${devPort}/reset`), "切断");
 		assert.equal(await getThroughProxy(`http://localhost:${devPort}/`), "dev");
 	});
 });

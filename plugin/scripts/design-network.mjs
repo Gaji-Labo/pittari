@@ -39,9 +39,12 @@ export async function startBlockingProxy(allowDomains) {
 		}
 		const upstream = httpRequest(target, { method: req.method, headers: req.headers }, (upstreamRes) => {
 			res.writeHead(upstreamRes.statusCode, upstreamRes.headers);
+			// pipe は中継先の接続が途中で切れても Chrome との接続を閉じないので、Chrome は本文の残りを待ち続け、撮影が進まない
+			upstreamRes.on("error", () => req.socket.destroy());
 			upstreamRes.pipe(res);
 		});
 		upstream.on("error", () => req.socket.destroy());
+		req.on("error", () => upstream.destroy());
 		req.pipe(upstream);
 	});
 

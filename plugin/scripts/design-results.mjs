@@ -5,11 +5,15 @@ import { join, relative, resolve, sep } from "node:path";
 // サンドボックスの中の AI に .design-diff の中をリンクへ差し替えられても、リンク先を読み書きしないよう、.design-diff の読み書きはすべてこのモジュールを通す
 export class UnsafeResultsPathError extends Error {}
 
+export function isValidResultsDirName(name) {
+	return /^[A-Za-z0-9_-]+$/.test(name);
+}
+
 // Node には、開いたディレクトリを基準にしてファイルを開く手段（openat）が無いので、代わりにそのディレクトリへ移り、相対パスで開く。
 // 深い階層を一度に作ると途中のリンクの先にディレクトリを作ってしまうので、1 階層ずつ作って移り、移るたびに想定したパスにいるかを確かめる
 function enterResultsDir(projectDir, segments, { create }) {
 	// 登録のファイルに書かれたラベルもここに来るので、.. で .design-diff の外へ出させない
-	const invalid = segments.find((segment) => !/^[A-Za-z0-9_-]+$/.test(segment));
+	const invalid = segments.find((segment) => !isValidResultsDirName(segment));
 	if (invalid !== undefined) throw new UnsafeResultsPathError(`.design-diff の下のディレクトリ名に使えない名前です: "${invalid}"`);
 	try {
 		process.chdir(projectDir);

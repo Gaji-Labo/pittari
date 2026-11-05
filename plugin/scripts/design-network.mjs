@@ -2,7 +2,7 @@ import { createServer, request as httpRequest } from "node:http";
 import { connect } from "node:net";
 import { isLocalHostname, LOCAL_HOSTNAMES } from "./design-url.mjs";
 
-// Playwright の route はリダイレクトの 2 回目以降の要求も WebSocket の接続も通らないので、Chrome の通信の宛先は route ではなくプロキシサーバーで絞る
+// Playwright の route はリダイレクトの 2 回目以降の要求も WebSocket の接続も通らないので、route ではなくプロキシサーバーで宛先を絞る
 
 const DOMAIN_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/;
 

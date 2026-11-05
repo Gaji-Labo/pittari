@@ -2,12 +2,11 @@ import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, ren
 import { randomUUID } from "node:crypto";
 import { join, relative, resolve, sep } from "node:path";
 
-// サンドボックスの中の AI が .design-diff の中をリンクへ差し替えても、design-diff と Stop hook がリンク先を読み書きしないよう、
-// .design-diff の読み書きはすべてこのモジュールを通す
+// サンドボックスの中の AI に .design-diff の中をリンクへ差し替えられても、リンク先を読み書きしないよう、.design-diff の読み書きはすべてこのモジュールを通す
 export class UnsafeResultsPathError extends Error {}
 
 // Node には、開いたディレクトリを基準にしてファイルを開く手段（openat）が無いので、代わりにそのディレクトリへ移り、相対パスで開く。
-// 深い階層を一度に作ると、途中の階層がリンクのときにリンク先へディレクトリを作ってしまうので、1 階層ずつ作って移り、移るたびに想定したパスにいるかを確かめる
+// 深い階層を一度に作ると途中のリンクの先にディレクトリを作ってしまうので、1 階層ずつ作って移り、移るたびに想定したパスにいるかを確かめる
 function enterResultsDir(projectDir, segments, { create }) {
 	// 登録のファイルに書かれたラベルもここに来るので、.. で .design-diff の外へ出させない
 	const invalid = segments.find((segment) => !/^[A-Za-z0-9_-]+$/.test(segment));
@@ -15,7 +14,7 @@ function enterResultsDir(projectDir, segments, { create }) {
 	try {
 		process.chdir(projectDir);
 	} catch (error) {
-		// Stop hook に渡るセッションの cwd は、消した worktree のように既に無いことがある。Stop hook が次の候補のディレクトリを探せるよう、記録が無いものとして扱う
+		// Stop hook に渡る cwd は、消した worktree のように既に無いことがある。次の候補のディレクトリを探せるよう、記録が無いものとして扱う
 		if (!create && error.code === "ENOENT") return false;
 		throw error;
 	}
@@ -114,8 +113,7 @@ export const INPUTS_DIR = "inputs";
 export function readInputFile(projectDir, path) {
 	const segments = relative(join(projectDir, ".design-diff", INPUTS_DIR), resolve(projectDir, path)).split(sep);
 	const name = segments.pop();
-	// inputs から見た相対パスは、inputs の外を指すなら .. で始まり、inputs そのものを指すなら name が空に、.design-diff そのものを指すなら name が .. になる。
-	// ディレクトリとファイルがリンクでないかは readResultsFile が開くときに確かめるので、ここではこの 3 通りだけを弾く
+	// inputs の外は .. で始まり、inputs・.design-diff そのものは name が空か .. になる。リンクでないかは readResultsFile が確かめるので、ここではこれらだけを弾く
 	if (segments[0] === ".." || name === "" || name === "." || name === "..") {
 		throw new UnsafeResultsPathError(`.design-diff/${INPUTS_DIR}/ の下のファイルではないので読みません: ${path}`);
 	}

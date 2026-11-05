@@ -1,4 +1,5 @@
 import { contentBounds } from "./design-bounds.mjs";
+import { formatDelta } from "./design-report.mjs";
 
 // デザイン画像の入力には Figma のノードの箱が無いので、実装側の要素の辺ごとに、デザイン画像の同じ位置に同じ境界があるかを調べる。
 // design-diff.mjs から使う。画素差分は面積の小さいずれを薄めてしまうので、配置はこちらで判定する
@@ -406,8 +407,6 @@ export function compareEdges(designPng, actualPng, elements, { scale, offset, to
 		};
 	});
 }
-
-const formatDelta = (value) => (Math.abs(value) < 0.05 ? "0" : `${value > 0 ? "+" : ""}${value.toFixed(1)}`);
 
 export function formatEdgeReport(results, tolerance) {
 	const decided = results.filter((result) => result.status !== "判定不能");

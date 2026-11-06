@@ -1,13 +1,15 @@
 import { parseArgs } from "node:util";
-import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 import { collectElementBoxes, compareEdges, formatEdgeReport } from "./design-edges.mjs";
 import { collectDomBoxes, compareLayout, formatLayoutReport, parseMetadata } from "./design-layout.mjs";
-import { runLogPath, targetLabel, workingTreeHash } from "./design-target.mjs";
+import { createDestinationPolicy, isValidAllowDomain, isValidAllowOrigin, portOf, startBlockingProxy } from "./design-network.mjs";
+import { appendResultsFile, readInputFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
+import { RUN_LOG_FILE, targetLabel, workingTreeHash } from "./design-target.mjs";
+import { isLocalDevServerUrl, isLocalHostname } from "./design-url.mjs";
 
 const { values } = parseArgs({
 	options: {
@@ -26,12 +28,18 @@ const { values } = parseArgs({
 		texts: { type: "string" },
 		"layout-tolerance": { type: "string", default: "1" },
 		build: { type: "string" },
+		"allow-domain": { type: "string", multiple: true },
+		"allow-origin": { type: "string", multiple: true },
 	},
 });
 
 function fail(message) {
 	console.error(message);
 	process.exit(1);
+}
+
+if (values.build !== undefined) {
+	fail("--build は廃止しました。ビルドが必要なプロジェクトでは、design-diff の前にビルドコマンドを単独で実行してください。");
 }
 
 const required = ["url", "selector", "design", "width"];
@@ -56,6 +64,24 @@ for (const [name, min] of [
 }
 
 const url = values.url;
+// ページを開いたあとのリダイレクト先と、ページが読み込むリソースの宛先は、プロキシサーバーが --url のオリジンと --allow-domain・--allow-origin で絞る。
+// そのため、ここでは最初に開く --url だけを確かめる
+if (!isLocalDevServerUrl(url)) {
+	fail(`--url には、ホスト名が localhost・127.0.0.1・[::1]・*.localhost の http: か https: の URL を指定してください（渡された値: "${url}"）`);
+}
+const allowDomains = (values["allow-domain"] ?? []).map((domain) => domain.toLowerCase());
+const invalidDomain = allowDomains.find((domain) => !isValidAllowDomain(domain));
+if (invalidDomain !== undefined) {
+	fail(`--allow-domain には、スキーム・ポート・ワイルドカードを付けないホスト名を指定してください（渡された値: "${invalidDomain}"）`);
+}
+const allowOrigins = values["allow-origin"] ?? [];
+const invalidOrigin = allowOrigins.find((origin) => !isValidAllowOrigin(origin));
+if (invalidOrigin !== undefined) {
+	fail(
+		`--allow-origin には、ホスト名が localhost・127.0.0.1・[::1]・*.localhost の、パスと末尾の / を付けないオリジン（例: http://localhost:8080）を指定してください（渡された値: "${invalidOrigin}"）`,
+	);
+}
+const destinationPolicy = createDestinationPolicy(url, allowDomains, allowOrigins);
 const selector = values.selector;
 const designPath = values.design;
 const width = Number(values.width);
@@ -71,30 +97,40 @@ const hideSelector = values.hide;
 const excludeSelectors = values.exclude ?? [];
 const layoutTolerance = Number(values["layout-tolerance"]);
 
+// スクリプトの置き場所に依存しないよう、入力と出力の置き場所は実行時のカレントディレクトリ（プロジェクトルート）を基準にする
+const projectDir = process.cwd();
+
 // Figma の get_metadata の出力を渡されたときだけ、画素差分に加えて要素ごとの箱も比べる
 let figmaNodes = null;
 let metadataWarnings = [];
 if (values.metadata) {
 	try {
-		({ nodes: figmaNodes, warnings: metadataWarnings } = parseMetadata(values.metadata.map((file) => readFileSync(file, "utf8"))));
+		({ nodes: figmaNodes, warnings: metadataWarnings } = parseMetadata(values.metadata.map((file) => readInputFile(projectDir, file))));
 	} catch (error) {
 		fail(`--metadata の XML を読めませんでした\n${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 let nodeTexts = {};
 if (values.texts) {
+	let textsSource;
 	try {
-		nodeTexts = JSON.parse(readFileSync(values.texts, "utf8"));
+		textsSource = readInputFile(projectDir, values.texts);
 	} catch (error) {
-		fail(`--texts の JSON を読めませんでした: ${values.texts}\n${error instanceof Error ? error.message : String(error)}`);
+		fail(`--texts のファイルを読めませんでした: ${values.texts}\n${error instanceof Error ? error.message : String(error)}`);
+	}
+	try {
+		nodeTexts = JSON.parse(textsSource);
+	} catch (error) {
+		fail(`--texts のファイルを JSON として読めませんでした: ${values.texts}\n${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
-const label = targetLabel({ selector, width, designWidth: values["design-width"], out: values.out });
-
-// スクリプトの置き場所に依存しないよう、出力先は実行時のカレントディレクトリ（プロジェクトルート）を基準にする
-const outDir = join(process.cwd(), ".design-diff", label);
-mkdirSync(outDir, { recursive: true });
+let label;
+try {
+	label = targetLabel({ selector, width, designWidth: values["design-width"], out: values.out });
+} catch (error) {
+	fail(error.message);
+}
 
 let designPng;
 try {
@@ -104,22 +140,7 @@ try {
 }
 const deviceScaleFactor = designPng.width / designWidth;
 
-// ビルドと撮影を別のコマンドにすると、AI がビルドし忘れたまま変更前の描画を測り、調整が効かなかったと誤って判断する。
-// 撮影の直前に同じ実行の中でビルドし、失敗したら測らない
-const BUILD_OUTPUT_TAIL_LINES = 20; // ビルドのログ全文を読ませると、原因の行が埋もれるうえにトークンを使う
-// spawnSync は既定で 1MB を超える出力を受け取るとビルドを止めるので、ログの多いビルドでも最後まで走らせる
-const BUILD_MAX_BUFFER = 64 * 1024 * 1024;
-if (values.build) {
-	const build = spawnSync(values.build, { shell: true, encoding: "utf8", maxBuffer: BUILD_MAX_BUFFER });
-	if (build.status !== 0) {
-		const output = `${build.stdout ?? ""}${build.stderr ?? ""}${build.error ? `\n${build.error.message}` : ""}`.trimEnd();
-		const tail = output.split("\n").slice(-BUILD_OUTPUT_TAIL_LINES).join("\n");
-		fail(`ビルドに失敗したので差分を測りませんでした: ${values.build}（終了コード ${build.status ?? build.signal}）\n${tail}`);
-	}
-	console.log(`ビルド済み: ${values.build}`);
-}
-// ビルド生成物を git で追跡しているプロジェクトでは、ビルドで作業ツリーが変わるので、ビルドのあとに求める
-const treeHash = workingTreeHash(process.cwd());
+const treeHash = workingTreeHash(projectDir);
 
 // 原因の見当がつく撮影の失敗は案内文だけを出し、それ以外の例外はスタックトレースごと表に出す
 class CaptureError extends Error {}
@@ -163,11 +184,30 @@ function cropToPaintedBox(png, rect) {
 	return cropped;
 }
 
-async function captureActual() {
+const blockedRequests = [];
+
+function isBlockedUrl(value) {
+	let parsed;
+	try {
+		parsed = new URL(value);
+	} catch {
+		return false;
+	}
+	return ["http:", "https:"].includes(parsed.protocol) && !destinationPolicy.isAllowed(parsed.hostname, portOf(parsed));
+}
+
+async function captureActual(proxy) {
 	let browser;
 	try {
 		// playwright が版を固定して配る Chromium ではなく自動更新される Chrome を使い、ブラウザの脆弱性の修正をプラグインの更新から切り離す
-		browser = await chromium.launch({ channel: "chrome" });
+		// Playwright は既定で Chrome のサンドボックスを外して起動するので、chromiumSandbox を明示して有効にする
+		browser = await chromium.launch({
+			channel: "chrome",
+			chromiumSandbox: true,
+			proxy: { server: proxy.server, bypass: destinationPolicy.proxyBypass },
+			// WebRTC の UDP の通信はプロキシサーバーを通らないので、Chrome の起動引数で止める
+			args: ["--webrtc-ip-handling-policy=disable_non_proxied_udp"],
+		});
 	} catch (error) {
 		throw new CaptureError(
 			`Chrome を起動できません。Google Chrome がインストールされているか、サンドボックス内で実行していないか確認してください。\n${errorText(error)}`,
@@ -176,12 +216,21 @@ async function captureActual() {
 	try {
 		// 撮影ごとに新しいコンテキストで開くとオープニングなどの演出が毎回再生されるので、完成形を撮らせる
 		const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor, reducedMotion: "reduce" });
+		context.on("requestfailed", (request) => {
+			if (isBlockedUrl(request.url())) blockedRequests.push({ url: request.url(), resourceType: request.resourceType() });
+		});
 		const page = await context.newPage();
+		const throwIfLeftDevServer = () => {
+			if (new URL(page.url()).origin === destinationPolicy.devOrigin) return;
+			throw new CaptureError(
+				`ページが開発サーバーの外へ移ったので、撮影せずに終えました（移った先: ${page.url()}。遮断した外部のホストへ移ったときは Chrome のエラー画面の URL になる）\n開発サーバーのリダイレクトや、location を書き換えるスクリプトを確かめてください。`,
+			);
+		};
 		try {
 			await page.goto(url, { waitUntil: "networkidle" });
 		} catch (error) {
 			throw new CaptureError(
-				`ページの読み込みに失敗しました: ${url}\n開発サーバーが起動しているか、--url の値が正しいか確認してください。\n${errorText(error)}`,
+				`ページの読み込みに失敗しました: ${url}\n開発サーバーが起動しているか、--url の値が正しいか、開発サーバーが外部へリダイレクトしていないか確認してください。\n${errorText(error)}`,
 			);
 		}
 		// ヘッドレスの Chromium はスクロールバーを幅 0 で隠すが、scrollbar-gutter: stable はその幅を確保し続けるので、
@@ -192,6 +241,7 @@ async function captureActual() {
 		try {
 			await locator.waitFor({ state: "visible", timeout: 10_000 });
 		} catch (error) {
+			throwIfLeftDevServer();
 			if (error instanceof Error && error.name === "TimeoutError") {
 				throw new CaptureError(
 					`要素が見つかりませんでした: ${selector}\nセレクタが正しいか、変更が描画先に反映されている（ビルドが必要なプロジェクトならビルド済み）か確認してください。`,
@@ -236,7 +286,9 @@ async function captureActual() {
 		const domBoxes = figmaNodes ? await locator.evaluate(collectDomBoxes) : null;
 		// Figma のノードが無い実行では、突き合わせる箱がデザイン側に無いので、実装側の要素の辺をデザイン画像の中で探す
 		const elementBoxes = figmaNodes ? null : await locator.evaluate(collectElementBoxes);
-		return { buffer: await locator.screenshot(), rect, domBoxes, elementBoxes, excludeBoxes };
+		const buffer = await locator.screenshot();
+		throwIfLeftDevServer();
+		return { buffer, rect, domBoxes, elementBoxes, excludeBoxes };
 	} finally {
 		await browser.close();
 	}
@@ -247,11 +299,27 @@ let targetRect;
 let domBoxes;
 let elementBoxes;
 let excludeBoxes;
+const proxy = await startBlockingProxy(destinationPolicy);
 try {
-	({ buffer: actualBuffer, rect: targetRect, domBoxes, elementBoxes, excludeBoxes } = await captureActual());
+	({ buffer: actualBuffer, rect: targetRect, domBoxes, elementBoxes, excludeBoxes } = await captureActual(proxy));
 } catch (error) {
 	if (error instanceof CaptureError) fail(error.message);
 	throw error;
+} finally {
+	await proxy.close();
+}
+
+// ローカルの宛先はホスト名だけでは開発サーバーと見分けられず、許可にも --allow-origin のオリジンが要るので、外部のホストと分けてオリジンで出す
+const blockedHosts = new Map();
+const blockedLocalOrigins = new Map();
+for (const { url: blockedUrl, resourceType } of blockedRequests) {
+	const parsed = new URL(blockedUrl);
+	const [groups, key] = isLocalHostname(parsed.hostname)
+		? [blockedLocalOrigins, parsed.origin]
+		: [blockedHosts, parsed.hostname];
+	const types = groups.get(key) ?? {};
+	types[resourceType] = (types[resourceType] ?? 0) + 1;
+	groups.set(key, types);
 }
 
 const screenshotPng = PNG.sync.read(actualBuffer);
@@ -462,11 +530,6 @@ const diffPane = downscale(diffPng, compareScale);
 if (compareScale < 1) markDiffRed(diffPng, diffPane, compareScale);
 const comparePng = compositeRow([downscale(designCanvas, compareScale), downscale(actualCanvas, compareScale), diffPane]);
 
-writeFileSync(join(outDir, "design.png"), PNG.sync.write(designCanvas));
-writeFileSync(join(outDir, "actual.png"), PNG.sync.write(actualCanvas));
-writeFileSync(join(outDir, "diff.png"), PNG.sync.write(diffPng));
-writeFileSync(join(outDir, "compare.png"), PNG.sync.write(comparePng));
-
 const summary = {
 	pass,
 	pixelPass,
@@ -495,32 +558,48 @@ const summary = {
 	targetRectCssPx: targetRect,
 	deviceScaleFactor,
 	diffRatioThreshold,
-	args: { url, selector, designPath, width, designWidth, height, wait, exclude: excludeSelectors, build: values.build },
+	args: { url, selector, designPath, width, designWidth, height, wait, exclude: excludeSelectors, allowDomains, allowOrigins },
 	timestamp: new Date().toISOString(),
 };
-writeFileSync(join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
-// summary.json は毎回上書きされるので、Stop hook が試行回数と計測後の変更の有無を確かめられるよう、実行ごとに 1 行残す。
-// 箱や辺だけで不合格になると diffRatio は閾値内に収まっているので、どの判定で落ちたかを Stop hook の理由に出せるよう件数も残す
-appendFileSync(
-	runLogPath(process.cwd(), label),
-	`${JSON.stringify({
-		at: summary.timestamp,
-		pass,
-		pixelPass,
-		diffRatio,
-		layoutMismatched: summary.layout?.mismatched ?? null,
-		edgeMismatched: summary.edges?.mismatched ?? null,
-		treeHash,
-	})}\n`,
-);
+const outputFiles = {
+	"design.png": PNG.sync.write(designCanvas),
+	"actual.png": PNG.sync.write(actualCanvas),
+	"diff.png": PNG.sync.write(diffPng),
+	"compare.png": PNG.sync.write(comparePng),
+	"summary.json": JSON.stringify(summary, null, 2),
+};
+if (layoutResults) {
+	outputFiles["layout.json"] = JSON.stringify({ tolerance: layoutTolerance, warnings: metadataWarnings, results: layoutResults }, null, 2);
+}
+if (edgeResults) outputFiles["edges.json"] = JSON.stringify({ tolerance: layoutTolerance, results: edgeResults }, null, 2);
+try {
+	writeResultsFiles(projectDir, [label], outputFiles);
+	// summary.json は毎回上書きされるので、Stop hook が試行回数と計測後の変更の有無を確かめられるよう、実行ごとに 1 行残す。
+	// 箱や辺だけで不合格になると diffRatio は閾値内に収まっているので、どの判定で落ちたかを Stop hook の理由に出せるよう件数も残す
+	appendResultsFile(
+		projectDir,
+		[label],
+		RUN_LOG_FILE,
+		`${JSON.stringify({
+			at: summary.timestamp,
+			pass,
+			pixelPass,
+			diffRatio,
+			layoutMismatched: summary.layout?.mismatched ?? null,
+			edgeMismatched: summary.edges?.mismatched ?? null,
+			treeHash,
+		})}\n`,
+	);
+} catch (error) {
+	if (!(error instanceof UnsafeResultsPathError)) throw error;
+	fail(`.design-diff の中を読み書きせずに終えました: ${error.message}`);
+}
 
 if (layoutResults) {
-	writeFileSync(join(outDir, "layout.json"), JSON.stringify({ tolerance: layoutTolerance, warnings: metadataWarnings, results: layoutResults }, null, 2));
 	for (const warning of metadataWarnings) console.log(`警告: ${warning}`);
 	console.log(formatLayoutReport(layoutResults, layoutTolerance));
 }
 if (edgeResults) {
-	writeFileSync(join(outDir, "edges.json"), JSON.stringify({ tolerance: layoutTolerance, results: edgeResults }, null, 2));
 	console.log(formatEdgeReport(edgeResults, layoutTolerance));
 }
 
@@ -531,6 +610,15 @@ if (excludedPixels > 0) {
 	const excludedCount = excludedReports.reduce((sum, report) => sum + report.rectsCssPx.length, 0);
 	console.log(`比較から外した範囲: ${excludedCount} 件（${excludedPixels} 画素、diffRatio の分母から除く。diff.png では青で塗る）`);
 }
+function printBlocked(heading, groups) {
+	if (groups.size === 0) return;
+	console.log(heading);
+	for (const [destination, resourceTypes] of groups) {
+		console.log(`  ${destination}: ${Object.entries(resourceTypes).map(([type, count]) => `${type} ${count} 件`).join(", ")}`);
+	}
+}
+printBlocked("読み込めなかった外部のホスト（--allow-domain で許可していないので遮断した。リソースの種類と件数）:", blockedHosts);
+printBlocked("読み込めなかったローカルの宛先（--url と別のオリジンで、--allow-origin で許可していないので遮断した。リソースの種類と件数）:", blockedLocalOrigins);
 if (!pixelPass) {
 	if (clusterReports.length > 0) {
 		console.log("差分クラスタ（CSS px 概算、差分量の大きい順）:");
@@ -546,6 +634,6 @@ if (!pixelPass) {
 		`画像確認はまず compare.png（design | actual | diff の縮小横並び）、詰めの確認のみ原寸 3 枚を読む（原寸画像上の座標はクラスタ座標の ${deviceScaleFactor} 倍）`,
 	);
 }
-console.log(`出力先: ${outDir}`);
+console.log(`出力先: ${join(projectDir, ".design-diff", label)}`);
 
 process.exit(pass ? 0 : 1);

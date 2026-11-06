@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util";
 import { readFileSync } from "node:fs";
 import { PNG } from "pngjs";
-import { boundsWhere, contentBounds } from "./design-bounds.mjs";
+import { boundsWhere, contentBounds } from "./modules/bounds.mjs";
 
 const USAGE = `使い方:
   design-measure --image <PNG> --design-width <表示幅> color <x>,<y> [<x>,<y> ...]

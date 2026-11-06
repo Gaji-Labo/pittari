@@ -1,8 +1,8 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { isValidSessionId } from "../plugin/scripts/design-session.mjs";
+import { isValidSessionId } from "../plugin/scripts/modules/session.mjs";
 import { targetLabel } from "../plugin/scripts/design-target.mjs";
-import { isLocalDevServerUrl } from "../plugin/scripts/design-url.mjs";
+import { isLocalDevServerUrl } from "../plugin/scripts/modules/url.mjs";
 
 describe("--url", () => {
 	for (const url of ["http://localhost:5173/", "http://127.0.0.1:3000", "http://[::1]:3000", "https://app.localhost:3000/page"]) {

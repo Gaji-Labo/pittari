@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { chromium } from "playwright-core";
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
-import { collectElementBoxes, compareEdges, formatEdgeReport } from "./design-edges.mjs";
-import { collectDomBoxes, compareLayout, formatLayoutReport, parseMetadata } from "./design-layout.mjs";
-import { createDestinationPolicy, isValidAllowDomain, isValidAllowOrigin, portOf, startBlockingProxy } from "./design-network.mjs";
-import { appendResultsFile, readInputFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
+import { collectElementBoxes, compareEdges, formatEdgeReport } from "./modules/edges.mjs";
+import { collectDomBoxes, compareLayout, formatLayoutReport, parseMetadata } from "./modules/layout.mjs";
+import { createDestinationPolicy, isValidAllowDomain, isValidAllowOrigin, portOf, startBlockingProxy } from "./modules/network.mjs";
+import { appendResultsFile, readInputFile, UnsafeResultsPathError, writeResultsFiles } from "./modules/results.mjs";
 import { RUN_LOG_FILE, targetLabel, workingTreeHash } from "./design-target.mjs";
-import { isLocalDevServerUrl, isLocalHostname } from "./design-url.mjs";
+import { isLocalDevServerUrl, isLocalHostname } from "./modules/url.mjs";
 
 const { values } = parseArgs({
 	options: {

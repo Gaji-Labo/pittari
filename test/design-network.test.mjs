@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, request } from "node:http";
-import { createDestinationPolicy, isValidAllowDomain, isValidAllowOrigin, startBlockingProxy } from "../plugin/scripts/design-network.mjs";
+import { createDestinationPolicy, isValidAllowDomain, isValidAllowOrigin, startBlockingProxy } from "../plugin/scripts/modules/network.mjs";
 
 describe("--allow-domain", () => {
 	for (const domain of ["fonts.googleapis.com", "use.typekit.net", "a-b.example.co.jp"]) {

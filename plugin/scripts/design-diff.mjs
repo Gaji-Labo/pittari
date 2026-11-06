@@ -8,7 +8,8 @@ import { collectElementBoxes, compareEdges, formatEdgeReport } from "./modules/e
 import { collectDomBoxes, compareLayout, formatLayoutReport, parseMetadata } from "./modules/layout.mjs";
 import { createDestinationPolicy, isValidAllowDomain, isValidAllowOrigin, portOf, startBlockingProxy } from "./modules/network.mjs";
 import { appendResultsFile, readInputFile, UnsafeResultsPathError, writeResultsFiles } from "./modules/results.mjs";
-import { RUN_LOG_FILE, targetLabel, workingTreeHash } from "./design-target.mjs";
+import { RUN_LOG_FILE, targetLabel } from "./modules/target.mjs";
+import { workingTreeHash } from "./modules/tree-hash.mjs";
 import { isLocalDevServerUrl, isLocalHostname } from "./modules/url.mjs";
 
 const { values } = parseArgs({

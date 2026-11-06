@@ -4,8 +4,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { INPUTS_DIR, isValidResultsDirName, readResultsFile, UnsafeResultsPathError, writeResultsFiles } from "./design-results.mjs";
-import { isValidSessionId } from "./design-session.mjs";
+import { INPUTS_DIR, isValidResultsDirName, readResultsFile, UnsafeResultsPathError, writeResultsFiles } from "./modules/results.mjs";
+import { isValidSessionId } from "./modules/session.mjs";
 
 const SESSIONS_DIR = "sessions";
 

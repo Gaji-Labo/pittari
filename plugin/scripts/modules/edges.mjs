@@ -1,5 +1,5 @@
-import { contentBounds } from "./design-bounds.mjs";
-import { formatDelta } from "./design-report.mjs";
+import { contentBounds } from "./bounds.mjs";
+import { formatDelta } from "./report.mjs";
 
 // デザイン画像の入力には Figma のノードの箱が無いので、実装側の要素の辺ごとに、デザイン画像の同じ位置に同じ境界があるかを調べる。
 // design-diff.mjs から使う。画素差分は面積の小さいずれを薄めてしまうので、配置はこちらで判定する

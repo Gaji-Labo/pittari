@@ -9,7 +9,7 @@ import {
 	readResultsFile,
 	UnsafeResultsPathError,
 	writeResultsFiles,
-} from "../plugin/scripts/design-results.mjs";
+} from "../../plugin/scripts/modules/results.mjs";
 
 const base = mkdtempSync(join(tmpdir(), "design-results-"));
 after(() => rmSync(base, { recursive: true, force: true }));

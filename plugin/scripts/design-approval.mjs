@@ -1,7 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { isValidAllowDomain, isValidAllowOrigin } from "./design-network.mjs";
-import { isValidSessionId } from "./design-session.mjs";
+import { isValidAllowDomain, isValidAllowOrigin } from "./modules/network.mjs";
+import { isValidSessionId } from "./modules/session.mjs";
 
 // シェルの規則を再現して design-diff を実行するかを見分ける方法では、timeout などを前に付けた形のように、サンドボックスの除外ルールに一致する形を
 // hook が 1 つ見落とすたびに、AI は承認画面を通さずに外部の宛先を許可できる。そこで、シェルが何も書き換えない決まった形だけを通す

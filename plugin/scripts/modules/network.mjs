@@ -1,6 +1,6 @@
 import { createServer, request as httpRequest } from "node:http";
 import { connect } from "node:net";
-import { isLocalDevServerUrl, isLocalHostname } from "./design-url.mjs";
+import { isLocalDevServerUrl, isLocalHostname } from "./url.mjs";
 
 // Playwright の route はリダイレクトの 2 回目以降の要求も WebSocket の接続も通らないので、route ではなくプロキシサーバーで宛先を絞る
 

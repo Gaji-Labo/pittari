@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: node --test "test/*.test.mjs"
+      - run: node --test "test/*.test.mjs" "test/modules/*.test.mjs"
       # GitHub のランナーには Chrome が入っているので、e2e のテストの前に Chrome を入れる手順は置かない
       - run: npm ci --prefix plugin
       - run: node --test "test/e2e/*.test.mjs"

@@ -1,8 +1,8 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { formatEdgeReport } from "../plugin/scripts/design-edges.mjs";
-import { formatLayoutReport } from "../plugin/scripts/design-layout.mjs";
-import { formatDelta } from "../plugin/scripts/design-report.mjs";
+import { formatEdgeReport } from "../../plugin/scripts/modules/edges.mjs";
+import { formatLayoutReport } from "../../plugin/scripts/modules/layout.mjs";
+import { formatDelta } from "../../plugin/scripts/modules/report.mjs";
 
 describe("ずれの値", () => {
 	for (const [value, expected] of [

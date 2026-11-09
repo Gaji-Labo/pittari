@@ -1,4 +1,4 @@
-import { formatDelta } from "./design-report.mjs";
+import { formatDelta } from "./report.mjs";
 
 // Figma の get_metadata が返すノードの箱と、実装の DOM の箱を要素ごとに突き合わせる。
 // design-diff.mjs から使う。画素差分は面積の小さいずれを薄めてしまうので、配置はこちらで判定する

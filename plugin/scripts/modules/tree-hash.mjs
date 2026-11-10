@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -12,7 +12,7 @@ function git(cwd, args, env) {
 	});
 }
 
-// 試行の途中でコミットしても値が変わらないよう、HEAD を含めず、ファイルの中身だけから木のハッシュを求める。
+// 試行の途中でコミットしても値が変わらないよう、ファイルの中身だけから木のハッシュを求める。
 // 利用者のステージの状態を変えないよう、実際のインデックスではなく、その複製に作業ツリーを丸ごと加える。
 // 空のインデックスから作ると stat のキャッシュが効かず、大きいリポジトリでは計測のたびに全ファイルを読み直すことになる
 export function workingTreeHash(cwd) {
@@ -37,8 +37,19 @@ export function workingTreeHash(cwd) {
 			// まだ一度も git add していないリポジトリにはインデックスがないので、空のインデックスから作る
 		}
 		const env = { GIT_INDEX_FILE: tempIndex };
-		// .design-diff/ を .gitignore に入れ忘れたプロジェクトでも、実行記録を書き足すたびに値が変わらないようにする
-		git(root, ["add", "-A", "--", ":(top,exclude,glob)**/.design-diff/**"], env);
+		// .design-diff/ を .gitignore に入れ忘れたプロジェクトでも、実行記録を書き足すたびや、
+		// 実行記録をステージ・コミットしたときに値が変わらないよう、インデックスにある分も外す
+		const designDiff = "**/.design-diff/**";
+		git(root, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", `:(top,glob)${designDiff}`], env);
+		// 読めないファイルが 1 つあるだけで design-diff が起動できなくならないよう、そのファイルを飛ばして続ける。
+		// --ignore-errors でも飛ばしたファイルがあると 1 で終わるので、1 は成功として扱い、それ以外の失敗だけを例外にする
+		const add = spawnSync("git", ["add", "-A", "--ignore-errors", "--", `:(top,exclude,glob)${designDiff}`], {
+			cwd: root,
+			stdio: "ignore",
+			env: { ...process.env, ...env },
+		});
+		if (add.error) throw add.error;
+		if (add.status !== 0 && add.status !== 1) throw new Error(`git add が ${add.status} で終了した`);
 		return git(root, ["write-tree"], env).trim();
 	} finally {
 		rmSync(tempDir, { recursive: true, force: true });

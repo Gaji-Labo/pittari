@@ -1,7 +1,7 @@
 import { after, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { workingTreeHash } from "../../plugin/scripts/modules/tree-hash.mjs";
@@ -79,5 +79,28 @@ describe("作業ツリーのハッシュ", () => {
 		mkdirSync(join(repo, "app", ".design-diff"), { recursive: true });
 		writeFileSync(join(repo, "app", ".design-diff", "runs.jsonl"), "{}\n");
 		assert.equal(workingTreeHash(repo), clean);
+	});
+
+	test(".design-diff の下のファイルをステージ・コミットしても値が変わらない", () => {
+		mkdirSync(join(repo, ".design-diff", "cv-375"), { recursive: true });
+		writeFileSync(join(repo, ".design-diff", "cv-375", "runs.jsonl"), "{}\n");
+		const before = workingTreeHash(repo);
+		git(repo, "add", "-A");
+		assert.equal(workingTreeHash(repo), before);
+		git(repo, "commit", "-q", "-m", "runs");
+		assert.equal(workingTreeHash(repo), before);
+	});
+
+	test("読めないファイルがあっても、ほかのファイルの変更で値が変わる", () => {
+		const secret = join(repo, "secret.css");
+		writeFileSync(secret, "s {}");
+		chmodSync(secret, 0o000);
+		try {
+			const before = workingTreeHash(repo);
+			writeFileSync(join(repo, "a.css"), "a { color: red }");
+			assert.notEqual(workingTreeHash(repo), before);
+		} finally {
+			chmodSync(secret, 0o600);
+		}
 	});
 });

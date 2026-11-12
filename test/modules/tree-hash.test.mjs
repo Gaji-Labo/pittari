@@ -1,7 +1,7 @@
 import { after, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { workingTreeHash } from "../../plugin/scripts/modules/tree-hash.mjs";
@@ -9,7 +9,10 @@ import { workingTreeHash } from "../../plugin/scripts/modules/tree-hash.mjs";
 const base = mkdtempSync(join(tmpdir(), "design-tree-hash-"));
 after(() => rmSync(base, { recursive: true, force: true }));
 
-const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { cwd, stdio: "ignore" });
+// コミットに署名する設定の人の手元でも、準備のコミットで落ちないよう署名を切る
+const gitOptions = ["-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false"];
+const git = (cwd, ...args) => execFileSync("git", [...gitOptions, ...args], { cwd, stdio: "ignore" });
+const status = (cwd) => execFileSync("git", ["status", "--porcelain"], { cwd, encoding: "utf8" });
 
 let repo;
 beforeEach(() => {
@@ -41,17 +44,85 @@ describe("作業ツリーのハッシュ", () => {
 		assert.equal(new Set([clean, modified, untracked]).size, 3);
 	});
 
-	test("ステージしただけの変更も値に入る", () => {
-		const clean = workingTreeHash(repo);
+	test("中身を変えずにコミットしても値が変わらない", () => {
 		writeFileSync(join(repo, "a.css"), "a { color: red }");
-		git(repo, "add", "a.css");
-		assert.notEqual(workingTreeHash(repo), clean);
+		writeFileSync(join(repo, "b.css"), "b {}");
+		const before = workingTreeHash(repo);
+		git(repo, "add", ".");
+		assert.equal(workingTreeHash(repo), before);
+		git(repo, "commit", "-q", "-m", "change");
+		assert.equal(workingTreeHash(repo), before);
+	});
+
+	// インデックスに .design-diff のエントリがあると、一時インデックスから外す段階で、git add より先に一時インデックスを書き直す
+	for (const stagedDesignDiff of [false, true]) {
+		test(`インデックスを書いたのと同じ時刻に書き換えた変更も値に入る（.design-diff をステージ${stagedDesignDiff ? "済み" : "していない"}）`, () => {
+			// ctime は書き換えのたびに進み、秒をまたぐと stat の不一致で変更に気付けてしまうので、mtime だけで比べさせる
+			git(repo, "config", "core.trustctime", "false");
+			if (stagedDesignDiff) {
+				mkdirSync(join(repo, ".design-diff"));
+				writeFileSync(join(repo, ".design-diff", "runs.jsonl"), "{}\n");
+			}
+			const file = join(repo, "a.css");
+			const past = new Date(Date.now() - 10_000);
+			writeFileSync(file, "aaaa");
+			utimesSync(file, past, past);
+			git(repo, "add", "-A");
+			const staged = workingTreeHash(repo);
+			writeFileSync(file, "bbbb");
+			utimesSync(file, past, past);
+			utimesSync(join(repo, ".git", "index"), past, past);
+			assert.notEqual(workingTreeHash(repo), staged);
+		});
+	}
+
+	test("呼んだ後も利用者のステージの状態を変えない", () => {
+		writeFileSync(join(repo, "a.css"), "a { color: red }");
+		writeFileSync(join(repo, "b.css"), "b {}");
+		writeFileSync(join(repo, "c.css"), "c {}");
+		git(repo, "add", "c.css");
+		const before = status(repo);
+		workingTreeHash(repo);
+		assert.equal(status(repo), before);
+	});
+
+	test("まだ何もコミットしていないリポジトリでも値を返す", () => {
+		const fresh = mkdtempSync(join(base, "fresh-"));
+		git(fresh, "init", "-q");
+		const empty = workingTreeHash(fresh);
+		writeFileSync(join(fresh, "a.css"), "a {}");
+		assert.notEqual(workingTreeHash(fresh), empty);
 	});
 
 	test(".design-diff の下のファイルは値に入れない", () => {
 		const clean = workingTreeHash(repo);
 		mkdirSync(join(repo, ".design-diff", "cv-375"), { recursive: true });
 		writeFileSync(join(repo, ".design-diff", "cv-375", "runs.jsonl"), "{}\n");
+		mkdirSync(join(repo, "app", ".design-diff"), { recursive: true });
+		writeFileSync(join(repo, "app", ".design-diff", "runs.jsonl"), "{}\n");
 		assert.equal(workingTreeHash(repo), clean);
+	});
+
+	test(".design-diff の下のファイルをステージ・コミットしても値が変わらない", () => {
+		mkdirSync(join(repo, ".design-diff", "cv-375"), { recursive: true });
+		writeFileSync(join(repo, ".design-diff", "cv-375", "runs.jsonl"), "{}\n");
+		const before = workingTreeHash(repo);
+		git(repo, "add", "-A");
+		assert.equal(workingTreeHash(repo), before);
+		git(repo, "commit", "-q", "-m", "runs");
+		assert.equal(workingTreeHash(repo), before);
+	});
+
+	test("読めないファイルがあっても、ほかのファイルの変更で値が変わる", () => {
+		const secret = join(repo, "secret.css");
+		writeFileSync(secret, "s {}");
+		chmodSync(secret, 0o000);
+		try {
+			const before = workingTreeHash(repo);
+			writeFileSync(join(repo, "a.css"), "a { color: red }");
+			assert.notEqual(workingTreeHash(repo), before);
+		} finally {
+			chmodSync(secret, 0o600);
+		}
 	});
 });

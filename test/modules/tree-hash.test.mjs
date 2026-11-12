@@ -54,20 +54,27 @@ describe("作業ツリーのハッシュ", () => {
 		assert.equal(workingTreeHash(repo), before);
 	});
 
-	test("インデックスを書いたのと同じ時刻に書き換えた変更も値に入る", () => {
-		// ctime は書き換えのたびに進み、秒をまたぐと stat の不一致で変更に気付けてしまうので、mtime だけで比べさせる
-		git(repo, "config", "core.trustctime", "false");
-		const file = join(repo, "a.css");
-		const past = new Date(Date.now() - 10_000);
-		writeFileSync(file, "aaaa");
-		utimesSync(file, past, past);
-		git(repo, "add", "a.css");
-		const staged = workingTreeHash(repo);
-		writeFileSync(file, "bbbb");
-		utimesSync(file, past, past);
-		utimesSync(join(repo, ".git", "index"), past, past);
-		assert.notEqual(workingTreeHash(repo), staged);
-	});
+	// インデックスに .design-diff のエントリがあると、一時インデックスから外す段階で、git add より先に一時インデックスを書き直す
+	for (const stagedDesignDiff of [false, true]) {
+		test(`インデックスを書いたのと同じ時刻に書き換えた変更も値に入る（.design-diff をステージ${stagedDesignDiff ? "済み" : "していない"}）`, () => {
+			// ctime は書き換えのたびに進み、秒をまたぐと stat の不一致で変更に気付けてしまうので、mtime だけで比べさせる
+			git(repo, "config", "core.trustctime", "false");
+			if (stagedDesignDiff) {
+				mkdirSync(join(repo, ".design-diff"));
+				writeFileSync(join(repo, ".design-diff", "runs.jsonl"), "{}\n");
+			}
+			const file = join(repo, "a.css");
+			const past = new Date(Date.now() - 10_000);
+			writeFileSync(file, "aaaa");
+			utimesSync(file, past, past);
+			git(repo, "add", "-A");
+			const staged = workingTreeHash(repo);
+			writeFileSync(file, "bbbb");
+			utimesSync(file, past, past);
+			utimesSync(join(repo, ".git", "index"), past, past);
+			assert.notEqual(workingTreeHash(repo), staged);
+		});
+	}
 
 	test("呼んだ後も利用者のステージの状態を変えない", () => {
 		writeFileSync(join(repo, "a.css"), "a { color: red }");

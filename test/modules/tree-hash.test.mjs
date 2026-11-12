@@ -1,7 +1,7 @@
 import { after, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { workingTreeHash } from "../../plugin/scripts/modules/tree-hash.mjs";
@@ -52,6 +52,21 @@ describe("作業ツリーのハッシュ", () => {
 		assert.equal(workingTreeHash(repo), before);
 		git(repo, "commit", "-q", "-m", "change");
 		assert.equal(workingTreeHash(repo), before);
+	});
+
+	test("インデックスを書いたのと同じ時刻に書き換えた変更も値に入る", () => {
+		// ctime は書き換えのたびに進み、秒をまたぐと stat の不一致で変更に気付けてしまうので、mtime だけで比べさせる
+		git(repo, "config", "core.trustctime", "false");
+		const file = join(repo, "a.css");
+		const past = new Date(Date.now() - 10_000);
+		writeFileSync(file, "aaaa");
+		utimesSync(file, past, past);
+		git(repo, "add", "a.css");
+		const staged = workingTreeHash(repo);
+		writeFileSync(file, "bbbb");
+		utimesSync(file, past, past);
+		utimesSync(join(repo, ".git", "index"), past, past);
+		assert.notEqual(workingTreeHash(repo), staged);
 	});
 
 	test("呼んだ後も利用者のステージの状態を変えない", () => {

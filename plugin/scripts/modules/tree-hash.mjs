@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, rmSync, statSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -33,6 +33,10 @@ export function workingTreeHash(cwd) {
 	try {
 		try {
 			copyFileSync(index, tempIndex);
+			// git は、インデックスを書いた時刻以降に更新されたファイルを、stat が一致していても中身を読み直して確かめる。
+			// 複製の更新時刻が今になると git がこの読み直しをしなくなり、インデックスを書いた直後の書き換えを見逃す
+			const { atime, mtime } = statSync(index);
+			utimesSync(tempIndex, atime, mtime);
 		} catch {
 			// まだ一度も git add していないリポジトリにはインデックスがないので、空のインデックスから作る
 		}

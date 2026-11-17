@@ -35,6 +35,17 @@ describe("作業ツリーのハッシュ", () => {
 		assert.equal(workingTreeHash(join(repo, "ignored")), null);
 	});
 
+	test("git add が失敗したら、警告を出して null を返す", (t) => {
+		writeFileSync(join(repo, ".gitattributes"), "*.bin filter=missing\n");
+		git(repo, "config", "filter.missing.required", "true");
+		git(repo, "config", "filter.missing.clean", "design-tree-hash-missing-filter");
+		writeFileSync(join(repo, "a.bin"), "bin");
+		const warn = t.mock.method(console, "warn", () => {});
+		assert.equal(workingTreeHash(repo), null);
+		assert.equal(warn.mock.callCount(), 1);
+		assert.match(warn.mock.calls[0].arguments[0], /合否と調整回数だけで/);
+	});
+
 	test("コミットしていないファイルの中身が変わると値が変わる", () => {
 		const clean = workingTreeHash(repo);
 		writeFileSync(join(repo, "a.css"), "a { color: red }");

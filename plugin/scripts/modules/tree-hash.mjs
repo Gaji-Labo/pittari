@@ -46,14 +46,26 @@ export function workingTreeHash(cwd) {
 		const designDiff = "**/.design-diff/**";
 		git(root, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", `:(top,glob)${designDiff}`], env);
 		// 読めないファイルが 1 つあるだけで design-diff が起動できなくならないよう、そのファイルを飛ばして続ける。
-		// --ignore-errors でも飛ばしたファイルがあると 1 で終わるので、1 は成功として扱い、それ以外の失敗だけを例外にする
+		// --ignore-errors でも飛ばしたファイルがあると 1 で終わるので、1 も成功として扱う
 		const add = spawnSync("git", ["add", "-A", "--ignore-errors", "--", `:(top,exclude,glob)${designDiff}`], {
 			cwd: root,
-			stdio: "ignore",
+			encoding: "utf8",
+			stdio: ["ignore", "ignore", "pipe"],
 			env: { ...process.env, ...env },
 		});
 		if (add.error) throw add.error;
-		if (add.status !== 0 && add.status !== 1) throw new Error(`git add が ${add.status} で終了した`);
+		// clean フィルタのコマンドが見つからないなどで git add が失敗したときに例外にすると、design-diff は計測できず、
+		// Stop hook は異常終了して Claude Code の終了を止められなくなる。ハッシュを求められない扱いにして、判定を緩めたことは警告で知らせる
+		if (add.status !== 0 && add.status !== 1) {
+			console.warn(
+				[
+					`警告: git add が ${add.status} で終了したため、作業ツリーのハッシュを求められませんでした。`,
+					"合格したあとにファイルが変わったかは確かめず、合否と調整回数だけで差分チェックの完走を判定します。",
+					add.stderr.trim(),
+				].join("\n"),
+			);
+			return null;
+		}
 		return git(root, ["write-tree"], env).trim();
 	} finally {
 		rmSync(tempDir, { recursive: true, force: true });

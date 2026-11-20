@@ -105,7 +105,7 @@ export function collectElementBoxes(root) {
 
 // design-measure の --tolerance の既定値と同じ。RGB の差の合計がこれ以下なら同じ色とみなす
 const COLOR_TOLERANCE = 12;
-// 箱の辺の外側と内側をそれぞれこの幅（CSS px）だけ帯として切り出して照合する。広げると、辺の近くにある別の境界まで帯に入る
+// 要素の縁の外側と内側をそれぞれこの幅（CSS px）だけ帯として切り出して照合する。広げると、辺の近くにある別の境界まで帯に入る
 const EDGE_BAND = 2;
 // デザイン画像で同じ境界を探す範囲（CSS px）。隣の行や罫線を同じ境界と取り違えないよう、表の行の間隔より狭くする
 const SEARCH_RANGE = 8;
@@ -278,7 +278,7 @@ function edgesOf(box, radii) {
 	];
 }
 
-// 背景や枠のある箱の辺は、辺をまたぐ帯をデザイン画像の中でずらしながら照合し、最も一致する位置を境界とみなす
+// 背景や枠のある要素の縁は、辺をまたぐ帯をデザイン画像の中でずらしながら照合し、最も一致する位置を境界とみなす
 function measureBoxEdge(edge, designPng, actualPng, scale, isExcluded) {
 	const band = Math.max(1, Math.round(EDGE_BAND * scale));
 	const search = Math.round(SEARCH_RANGE * scale);

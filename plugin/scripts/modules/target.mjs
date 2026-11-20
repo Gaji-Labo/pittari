@@ -1,6 +1,6 @@
 import { INPUTS_DIR, isValidResultsDirName, readResultsFile } from "./results.mjs";
 
-// 比較対象（target）は、design-target register で登録し、design-diff が測る、セレクタと幅の組
+// 比較対象（target）は、design-target register で登録し、design-diff が測る、セレクタ・ビューポート幅・見本の幅の組
 
 export const SESSIONS_DIR = "sessions";
 
@@ -20,7 +20,7 @@ export function targetLabel({ selector, width, designWidth, out }) {
 		if (out === INPUTS_DIR) throw new Error(`--out に "${INPUTS_DIR}" は使えません。--metadata・--texts のファイルの置き場所と重なります`);
 		return out;
 	}
-	// 同じセレクタ・同じビューポートで書き出し幅だけ変えた実行が上書きし合わないよう、指定時は幅を重ねる
+	// 同じセレクタ・同じビューポートで見本の幅だけ変えた実行が上書きし合わないよう、指定時は幅を重ねる
 	const designWidthLabel = designWidth === undefined ? "" : `-${Number(designWidth)}`;
 	return `${selector.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "")}-${Number(width)}${designWidthLabel}`;
 }
